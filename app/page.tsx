@@ -38,7 +38,7 @@ const staggerContainer = {
 const features = [
   {
     icon: Sparkles,
-    title: 'AI Project Generation',
+    title: 'Build your idea with AI',
     description: 'Generate complete project structures from natural language descriptions',
   },
   {

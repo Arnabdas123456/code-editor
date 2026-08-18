@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Sparkles, Github, Twitter } from 'lucide-react';
+import { Sparkles, Code, MessageCircle } from 'lucide-react';
 
 export default function Footer() {
   return (
@@ -54,7 +54,7 @@ export default function Footer() {
               rel="noopener noreferrer"
               className="w-10 h-10 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center transition-all duration-300 hover:scale-110"
             >
-              <Twitter className="w-5 h-5 text-gray-400" />
+              <MessageCircle className="w-5 h-5 text-gray-400" />
             </a>
             <a
               href="https://github.com"
@@ -62,7 +62,7 @@ export default function Footer() {
               rel="noopener noreferrer"
               className="w-10 h-10 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center transition-all duration-300 hover:scale-110"
             >
-              <Github className="w-5 h-5 text-gray-400" />
+              <Code className="w-5 h-5 text-gray-400" />
             </a>
           </div>
         </div>
