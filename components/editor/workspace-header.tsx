@@ -3,15 +3,17 @@
 import React from 'react';
 import Link from 'next/link';
 import {
-  Code2,
   FolderTree,
   MessageSquareCode,
-  Play,
   Save,
   Sparkles,
   Check,
   ChevronRight,
   Loader2,
+  Download,
+  Command,
+  Code2,
+  Compass,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -22,18 +24,20 @@ import {
 } from '@/components/ui/tooltip';
 import type { Project } from '@/lib/types/database';
 
-interface WorkspaceHeaderProps {
+export interface WorkspaceHeaderProps {
   project: Project | null;
   activePath: string;
   dirty: boolean;
   isWorking: boolean;
+  workspace?: 'developer' | 'product';
+  onWorkspaceChange?: (ws: 'developer' | 'product') => void;
   onSave: () => void | Promise<unknown>;
-  tab: 'preview' | 'code';
-  setTab: (tab: 'preview' | 'code') => void;
+  onExportZip: () => void | Promise<unknown>;
+  onOpenCommandPalette: () => void;
   showFiles: boolean;
   onToggleFiles: () => void;
-  showPrompt: boolean;
-  onTogglePrompt: () => void;
+  showAiPanel: boolean;
+  onToggleAiPanel: () => void;
 }
 
 export function WorkspaceHeader({
@@ -41,22 +45,24 @@ export function WorkspaceHeader({
   activePath,
   dirty,
   isWorking,
+  workspace = 'developer',
+  onWorkspaceChange,
   onSave,
-  tab,
-  setTab,
+  onExportZip,
+  onOpenCommandPalette,
   showFiles,
   onToggleFiles,
-  showPrompt,
-  onTogglePrompt,
+  showAiPanel,
+  onToggleAiPanel,
 }: WorkspaceHeaderProps) {
   return (
-    <header className="relative flex h-12 shrink-0 items-center justify-between bg-[var(--ide-bg-elevated)] px-4 select-none">
-      {/* Bottom border with subtle glow when AI is active */}
+    <header className="relative flex h-12 shrink-0 items-center justify-between bg-[#0b0c18] border-b border-white/10 px-4 select-none z-10">
+      {/* Bottom glowing line during active AI synthesis */}
       <div
-        className={`absolute inset-x-0 bottom-0 h-px transition-all duration-500 ${
+        className={`absolute inset-x-0 bottom-0 h-[2px] transition-all duration-500 ${
           isWorking
-            ? 'bg-gradient-to-r from-transparent via-[var(--ide-accent)] to-transparent opacity-60'
-            : 'bg-[var(--ide-border)]'
+            ? 'bg-gradient-to-r from-transparent via-indigo-500 to-purple-500 opacity-90 shadow-[0_0_10px_rgba(99,102,241,0.8)]'
+            : 'bg-transparent'
         }`}
       />
 
@@ -64,103 +70,99 @@ export function WorkspaceHeader({
       <div className="flex items-center gap-3 min-w-0">
         <Link
           href="/"
-          className="group flex items-center gap-2.5 rounded-lg py-1 text-sm font-semibold text-white transition hover:opacity-90"
+          className="group flex items-center gap-2 rounded-lg py-1 text-sm font-semibold text-white transition hover:opacity-90"
         >
           <span
-            className={`flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 via-indigo-500/90 to-purple-600 shadow-md transition-shadow duration-500 ${
+            className={`flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 shadow-md transition-all duration-500 ${
               isWorking
-                ? 'shadow-indigo-500/40 animate-pulse-glow'
+                ? 'shadow-indigo-500/50 scale-105 ring-2 ring-indigo-400/50'
                 : 'shadow-indigo-500/20'
             }`}
           >
             <Sparkles className="h-3.5 w-3.5 text-white" />
           </span>
-          <span className="hidden sm:inline font-bold tracking-tight text-white">
-            Codatron
+          <span className="font-bold tracking-tight text-white hidden sm:inline">
+            AI Studio
           </span>
         </Link>
 
-        <ChevronRight className="h-3.5 w-3.5 text-[var(--ide-text-faint)] hidden sm:block" />
+        <ChevronRight className="h-3.5 w-3.5 text-slate-600 hidden sm:block" />
 
         {/* Project Name + Model */}
-        <div className="flex items-center gap-2.5 min-w-0">
-          <h1 className="truncate text-[13px] font-semibold text-[var(--ide-text-primary)]">
+        <div className="flex items-center gap-2 min-w-0">
+          <h1 className="truncate text-xs sm:text-[13px] font-semibold text-slate-100 max-w-[150px] sm:max-w-[220px]">
             {project?.name ?? 'Loading…'}
           </h1>
           <Badge
             variant="outline"
-            className="hidden md:inline-flex border-indigo-500/25 bg-indigo-500/8 text-[10px] font-medium text-indigo-300 py-0 px-1.5"
+            className="hidden md:inline-flex border-indigo-500/30 bg-indigo-500/10 text-[10px] font-medium text-indigo-300 py-0 px-1.5"
           >
             Gemini Flash
           </Badge>
         </div>
-
-        {activePath && (
-          <div className="hidden lg:flex items-center gap-1.5 text-xs min-w-0">
-            <ChevronRight className="h-3 w-3 shrink-0 text-[var(--ide-text-faint)]" />
-            <span className="font-mono text-[11px] text-[var(--ide-text-muted)] truncate max-w-[200px]">
-              {activePath}
-            </span>
-          </div>
-        )}
       </div>
 
-      {/* Center: View Switcher with sliding pill */}
-      <div className="flex items-center rounded-lg border border-[var(--ide-border)] bg-[var(--ide-bg-surface)] p-0.5 gap-0.5">
-        <button
-          type="button"
-          onClick={() => setTab('preview')}
-          className={`relative flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-xs font-medium transition-all duration-200 ${
-            tab === 'preview'
-              ? 'bg-[var(--ide-accent)] text-white shadow-sm shadow-indigo-500/25'
-              : 'text-[var(--ide-text-muted)] hover:text-[var(--ide-text-primary)] hover:bg-white/5'
-          }`}
-        >
-          <Play className="h-3 w-3" />
-          <span>Preview</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setTab('code')}
-          className={`relative flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-xs font-medium transition-all duration-200 ${
-            tab === 'code'
-              ? 'bg-[var(--ide-accent)] text-white shadow-sm shadow-indigo-500/25'
-              : 'text-[var(--ide-text-muted)] hover:text-[var(--ide-text-primary)] hover:bg-white/5'
-          }`}
-        >
-          <Code2 className="h-3 w-3" />
-          <span>Code</span>
-          {dirty && (
-            <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
-          )}
-        </button>
-      </div>
-
-      {/* Right: Panel Toggles + Save Status + Save Button */}
-      <div className="flex items-center gap-1.5">
-        {/* AI Working Indicator */}
-        {isWorking && (
-          <div className="hidden sm:flex items-center gap-2 rounded-full border border-indigo-500/20 bg-indigo-500/8 px-2.5 py-1 mr-1">
-            <Loader2 className="h-3 w-3 animate-spin text-indigo-400" />
-            <span className="text-[11px] font-medium text-indigo-300">Generating…</span>
+      {/* Center: Workspace Switcher & Command Palette */}
+      <div className="flex items-center gap-2">
+        {onWorkspaceChange && (
+          <div className="flex items-center rounded-lg bg-black/40 border border-white/10 p-0.5 shadow-inner">
+            <button
+              type="button"
+              onClick={() => onWorkspaceChange('developer')}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition ${
+                workspace === 'developer'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
+              }`}
+            >
+              <Code2 className="h-3.5 w-3.5" />
+              <span>Developer IDE</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onWorkspaceChange('product')}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition ${
+                workspace === 'product'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
+              }`}
+            >
+              <Compass className="h-3.5 w-3.5" />
+              <span>Product Manager</span>
+            </button>
           </div>
         )}
 
-        {/* Toggle Files Panel */}
+        <button
+          type="button"
+          onClick={onOpenCommandPalette}
+          className="hidden lg:flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1 text-xs text-slate-400 hover:text-slate-200 hover:bg-white/5 transition"
+        >
+          <Command className="h-3.5 w-3.5 text-slate-400" />
+          <span>Command Palette…</span>
+          <kbd className="rounded border border-white/10 bg-white/5 px-1 text-[10px] font-mono text-slate-400">
+            Ctrl+K
+          </kbd>
+        </button>
+      </div>
+
+      {/* Right: Actions, Panels, Save, Export */}
+      <div className="flex items-center gap-2">
+        {/* Toggle File Explorer */}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
               variant="ghost"
               size="sm"
               onClick={onToggleFiles}
-              className={`h-8 w-8 p-0 transition-all duration-200 ${
+              className={`h-8 w-8 p-0 transition ${
                 showFiles
-                  ? 'bg-white/8 text-white shadow-sm'
-                  : 'text-[var(--ide-text-muted)] hover:text-white hover:bg-white/5'
+                  ? 'bg-white/10 text-white'
+                  : 'text-slate-400 hover:text-white hover:bg-white/5'
               }`}
             >
               <FolderTree className="h-4 w-4" />
-              <span className="sr-only">Toggle File Explorer</span>
+              <span className="sr-only">Toggle Files</span>
             </Button>
           </TooltipTrigger>
           <TooltipContent side="bottom" className="text-xs">
@@ -168,60 +170,68 @@ export function WorkspaceHeader({
           </TooltipContent>
         </Tooltip>
 
-        {/* Toggle Prompt Panel */}
+        {/* Toggle AI Panel */}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
               variant="ghost"
               size="sm"
-              onClick={onTogglePrompt}
-              className={`h-8 w-8 p-0 transition-all duration-200 ${
-                showPrompt
-                  ? 'bg-white/8 text-white shadow-sm'
-                  : 'text-[var(--ide-text-muted)] hover:text-white hover:bg-white/5'
+              onClick={onToggleAiPanel}
+              className={`h-8 w-8 p-0 transition ${
+                showAiPanel
+                  ? 'bg-white/10 text-white'
+                  : 'text-slate-400 hover:text-white hover:bg-white/5'
               }`}
             >
               <MessageSquareCode className="h-4 w-4" />
-              <span className="sr-only">Toggle AI Prompt</span>
+              <span className="sr-only">Toggle AI Assistant</span>
             </Button>
           </TooltipTrigger>
           <TooltipContent side="bottom" className="text-xs">
-            {showPrompt ? 'Hide AI' : 'Show AI'}
+            {showAiPanel ? 'Hide AI Assistant' : 'Show AI Assistant'}
           </TooltipContent>
         </Tooltip>
 
-        {/* Dirty State Badge */}
-        <div className="hidden sm:flex items-center ml-1">
-          {dirty ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/20 bg-amber-500/8 px-2.5 py-1 text-[10px] font-medium text-amber-300">
-              <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
-              Unsaved
-            </span>
-          ) : (
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/8 px-2.5 py-1 text-[10px] font-medium text-emerald-300">
-              <Check className="h-3 w-3 text-emerald-400" />
-              Saved
-            </span>
-          )}
-        </div>
+        <div className="h-4 w-px bg-white/10 mx-0.5 hidden sm:block" />
+
+        {/* Export ZIP */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void onExportZip()}
+              className="h-8 px-2.5 text-xs text-slate-300 hover:text-white hover:bg-white/5 gap-1.5"
+            >
+              <Download className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Export ZIP</span>
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="text-xs">
+            Download full project as ZIP
+          </TooltipContent>
+        </Tooltip>
 
         {/* Save Button */}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
-              variant="outline"
               size="sm"
               onClick={() => void onSave()}
               disabled={!dirty || isWorking}
-              className={`h-8 text-xs transition-all duration-200 border-[var(--ide-border)] ${
+              className={`h-8 px-3 text-xs font-medium gap-1.5 transition shadow-sm ${
                 dirty
-                  ? 'border-indigo-500/30 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 hover:text-white hover:border-indigo-500/40'
-                  : 'text-[var(--ide-text-faint)] hover:bg-white/5 hover:text-[var(--ide-text-secondary)]'
+                  ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-500/20'
+                  : 'bg-white/5 text-slate-500 hover:bg-white/5'
               }`}
             >
-              <Save className="mr-1.5 h-3.5 w-3.5" />
+              {isWorking ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Save className="h-3.5 w-3.5" />
+              )}
               <span>Save</span>
-              <kbd className="hidden lg:inline ml-1.5 text-[9px] font-mono opacity-50">⌘S</kbd>
+              <kbd className="hidden lg:inline text-[9px] font-mono opacity-60">⌘S</kbd>
             </Button>
           </TooltipTrigger>
           <TooltipContent side="bottom" className="text-xs">

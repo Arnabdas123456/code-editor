@@ -1,3 +1,4 @@
+
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database, ProjectFile } from '../types/database';
 
@@ -110,14 +111,40 @@ export async function batchUpsertFiles(
 }
 
 /**
- * Delete a file or directory by its path in a project.
+ * Delete a file or directory recursively by its path in a project.
  */
 export async function deleteProjectFile(
   supabase: SupabaseClient<Database>,
   projectId: string,
-  filePath: string
+  filePath: string,
+  isFolder: boolean = false
 ): Promise<{ success: boolean; error: Error | null }> {
   try {
+    if (isFolder) {
+      // Delete the folder record itself and all files prefixed with filePath/
+      const { error: childError } = await supabase
+        .from('project_files')
+        .delete()
+        .eq('project_id', projectId)
+        .like('path', `${filePath}/%`);
+
+      if (childError) {
+        console.error(`Error deleting folder children for ${filePath}:`, childError);
+      }
+
+      const { error } = await supabase
+        .from('project_files')
+        .delete()
+        .eq('project_id', projectId)
+        .eq('path', filePath);
+
+      if (error) {
+        console.error(`Error deleting folder ${filePath}:`, error);
+        return { success: false, error: new Error(error.message) };
+      }
+      return { success: true, error: null };
+    }
+
     const { error } = await supabase
       .from('project_files')
       .delete()
@@ -138,13 +165,64 @@ export async function deleteProjectFile(
 
 /** Rename is deliberately implemented as a copy + delete only after the copy succeeds. */
 export async function renameProjectFile(
-  supabase: SupabaseClient<Database>, projectId: string, file: ProjectFile, nextPath: string
+  supabase: SupabaseClient<Database>,
+  projectId: string,
+  file: ProjectFile,
+  nextPath: string
 ): Promise<{ data: ProjectFile | null; error: Error | null }> {
   const name = nextPath.split('/').pop() || nextPath;
+
+  if (file.is_folder) {
+    // 1. Fetch all children
+    const { data: children, error: fetchErr } = await supabase
+      .from('project_files')
+      .select('*')
+      .eq('project_id', projectId)
+      .like('path', `${file.path}/%`);
+
+    if (fetchErr) return { data: null, error: new Error(fetchErr.message) };
+
+    // 2. Insert new folder
+    const savedFolder = await saveProjectFile(supabase, projectId, {
+      path: nextPath,
+      name,
+      content: '',
+      language: 'folder',
+      isFolder: true,
+    });
+    if (savedFolder.error) return savedFolder;
+
+    // 3. Upsert children with rewritten paths
+    if (children && children.length > 0) {
+      const updatedChildren = children.map((c) => {
+        const sub = c.path.slice(file.path.length + 1);
+        const childNewPath = `${nextPath}/${sub}`;
+        const childName = childNewPath.split('/').pop() || childNewPath;
+        return {
+          path: childNewPath,
+          name: childName,
+          content: c.content,
+          language: c.language,
+          isFolder: c.is_folder,
+        };
+      });
+      const batchRes = await batchUpsertFiles(supabase, projectId, updatedChildren);
+      if (!batchRes.success) return { data: null, error: batchRes.error };
+    }
+
+    // 4. Delete old folder and old children
+    await deleteProjectFile(supabase, projectId, file.path, true);
+    return savedFolder;
+  }
+
   const saved = await saveProjectFile(supabase, projectId, {
-    path: nextPath, name, content: file.content, language: file.language, isFolder: file.is_folder,
+    path: nextPath,
+    name,
+    content: file.content,
+    language: file.language,
+    isFolder: file.is_folder,
   });
   if (saved.error) return saved;
-  const removed = await deleteProjectFile(supabase, projectId, file.path);
+  const removed = await deleteProjectFile(supabase, projectId, file.path, false);
   return removed.error ? { data: null, error: removed.error } : saved;
 }

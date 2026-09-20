@@ -43,10 +43,12 @@ export async function updateSession(request: NextRequest) {
   const isProtectedPath = pathname.startsWith('/editor');
 
   if (!user && isProtectedPath) {
-    const redirectUrl = request.nextUrl.clone();
-    redirectUrl.pathname = '/login';
-    redirectUrl.searchParams.set('next', pathname);
-    return NextResponse.redirect(redirectUrl);
+    if (process.env.NODE_ENV === 'production') {
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = '/login';
+      redirectUrl.searchParams.set('next', pathname);
+      return NextResponse.redirect(redirectUrl);
+    }
   }
 
   return supabaseResponse;

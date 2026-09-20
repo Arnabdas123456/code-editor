@@ -203,12 +203,15 @@ export default function LivePreview({
             theme="dark"
             files={bundle.sandpackFiles}
             customSetup={{
+              entry: '/index.tsx',
               dependencies: bundle.dependencies,
             }}
             options={{
               autorun: true,
               recompileMode: 'delayed',
               recompileDelay: 300,
+              activeFile: '/App.tsx',
+              visibleFiles: [],
             }}
           >
             {/* Real-time Error Interceptor */}

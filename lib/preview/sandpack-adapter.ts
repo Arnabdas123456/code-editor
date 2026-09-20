@@ -270,15 +270,13 @@ export function buildSandpackBundle(
     sandpackFiles[previewPath] = { code: transformedCode };
   }
 
-  // 6. Generate the React preview entrypoint (/src/App.tsx)
-  const relativePageImport = `./${pageFile.path.replace(/\.(tsx|jsx|ts|js)$/, '')}`;
-  const globalsImport = globalsFile ? `import './${globalsFile.path}';` : '';
+  // 6. Generate the React preview entrypoints (/App.tsx, /index.tsx, /src/App.tsx)
+  const rootPageImport = `./src/${pageFile.path.replace(/\.(tsx|jsx|ts|js)$/, '')}`;
+  const srcPageImport = `./${pageFile.path.replace(/\.(tsx|jsx|ts|js)$/, '')}`;
+  const rootGlobalsImport = globalsFile ? `import './src/${globalsFile.path}';` : '';
+  const srcGlobalsImport = globalsFile ? `import './${globalsFile.path}';` : '';
 
-  sandpackFiles['/src/App.tsx'] = {
-    code: `import React, { Component, ErrorInfo, ReactNode } from 'react';
-${globalsImport}
-import PageComponent from '${relativePageImport}';
-
+  const errorBoundaryCode = `
 class PreviewErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; error: Error | null }> {
   constructor(props: { children: ReactNode }) {
     super(props);
@@ -309,7 +307,14 @@ class PreviewErrorBoundary extends Component<{ children: ReactNode }, { hasError
     return this.props.children;
   }
 }
+`;
 
+  // Root /App.tsx (default for Sandpack react-ts template)
+  sandpackFiles['/App.tsx'] = {
+    code: `import React, { Component, ErrorInfo, ReactNode } from 'react';
+${rootGlobalsImport}
+import PageComponent from '${rootPageImport}';
+${errorBoundaryCode}
 export default function App() {
   return (
     <PreviewErrorBoundary>
@@ -319,6 +324,53 @@ export default function App() {
 }
 `,
     active: true,
+  };
+
+  // Root /index.tsx (Sandpack root entrypoint)
+  sandpackFiles['/index.tsx'] = {
+    code: `import React from 'react';
+import { createRoot } from 'react-dom/client';
+import App from './App';
+
+const container = document.getElementById('root');
+if (container) {
+  const root = createRoot(container);
+  root.render(<App />);
+}
+`,
+    hidden: true,
+  };
+
+  // /src/App.tsx (for environments resolving from src)
+  sandpackFiles['/src/App.tsx'] = {
+    code: `import React, { Component, ErrorInfo, ReactNode } from 'react';
+${srcGlobalsImport}
+import PageComponent from '${srcPageImport}';
+${errorBoundaryCode}
+export default function App() {
+  return (
+    <PreviewErrorBoundary>
+      <PageComponent />
+    </PreviewErrorBoundary>
+  );
+}
+`,
+    hidden: true,
+  };
+
+  // /src/index.tsx
+  sandpackFiles['/src/index.tsx'] = {
+    code: `import React from 'react';
+import { createRoot } from 'react-dom/client';
+import App from './App';
+
+const container = document.getElementById('root');
+if (container) {
+  const root = createRoot(container);
+  root.render(<App />);
+}
+`,
+    hidden: true,
   };
 
   // 7. Resolve dependencies

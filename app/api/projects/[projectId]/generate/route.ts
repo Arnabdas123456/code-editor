@@ -8,17 +8,82 @@ import {
   selectProjectContext,
   validateAgentResult,
 } from '@/lib/ai/coding-agent';
+import type { ProjectFile } from '@/lib/types/database';
 
 export const runtime = 'nodejs';
 
 export async function POST(request: Request, context: { params: Promise<{ projectId: string }> }) {
   try {
     const { projectId } = await context.params;
-    const body = await request.json() as { prompt?: string; activePath?: string; selectedCode?: string; previewError?: string };
+    const body = await request.json() as {
+      prompt?: string;
+      activePath?: string;
+      selectedCode?: string;
+      previewError?: string;
+      files?: ProjectFile[];
+    };
     if (!body.prompt?.trim() || body.prompt.length > 8_000) return NextResponse.json({ message: 'Provide a prompt under 8,000 characters.' }, { status: 400 });
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return NextResponse.json({ message: 'Authentication required.' }, { status: 401 });
+    if (!user) {
+      if (process.env.NODE_ENV !== 'production' || projectId === 'local-project') {
+        const currentFiles: ProjectFile[] = (body.files ?? []).map((f: any, i: number) => ({
+          id: f.id || `f-${i}`,
+          project_id: projectId,
+          name: f.name || f.path.split('/').pop() || f.path,
+          path: f.path,
+          content: f.content ?? '',
+          language: f.language || inferLanguage(f.path),
+          is_folder: Boolean(f.is_folder),
+          created_at: f.created_at || new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }));
+
+        const proposed = await runGeminiAgent(
+          body.prompt.trim(),
+          selectProjectContext(currentFiles, body.activePath, body.selectedCode, body.previewError)
+        );
+        const result = validateAgentResult(proposed, currentFiles);
+
+        let updatedFiles = [...currentFiles];
+        for (const op of result.operations) {
+          if (op.type === 'create') {
+            const name = op.path.split('/').pop() || op.path;
+            updatedFiles = updatedFiles.filter((f) => f.path !== op.path);
+            updatedFiles.push({
+              id: `f-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              project_id: projectId,
+              name,
+              path: op.path,
+              content: op.content,
+              language: op.language || inferLanguage(op.path),
+              is_folder: false,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            });
+          } else if (op.type === 'update') {
+            updatedFiles = updatedFiles.map((f) =>
+              f.path === op.path ? { ...f, content: op.content, updated_at: new Date().toISOString() } : f
+            );
+          } else if (op.type === 'delete') {
+            updatedFiles = updatedFiles.filter((f) => f.path !== op.path);
+          } else if (op.type === 'rename') {
+            const name = op.newPath.split('/').pop() || op.newPath;
+            updatedFiles = updatedFiles.map((f) =>
+              f.path === op.path ? { ...f, path: op.newPath, name, updated_at: new Date().toISOString() } : f
+            );
+          }
+        }
+
+        return NextResponse.json({
+          summary: result.summary,
+          operations: result.operations,
+          files: updatedFiles,
+          dependencies: result.dependencies ?? [],
+        });
+      }
+      return NextResponse.json({ message: 'Authentication required.' }, { status: 401 });
+    }
 
     const rateLimit = checkRateLimit(`generate:${user.id}`, 10, 60_000);
     if (!rateLimit.success) {

@@ -17,7 +17,13 @@ export class GeminiUnavailableError extends Error {
 
 const PATH_PATTERN = /^[a-zA-Z0-9._@()\-/]+$/;
 const BLOCKED_SEGMENTS = new Set(['node_modules', '.git', '.next']);
-const ALLOWED_DEPENDENCIES = new Set(['lucide-react', 'framer-motion', 'date-fns']);
+const ALLOWED_DEPENDENCIES = new Set([
+  'lucide-react',
+  'framer-motion',
+  'date-fns',
+  'clsx',
+  'tailwind-merge',
+]);
 
 export function validateAgentResult(input: unknown, existingFiles: ProjectFile[]): AgentResult {
   if (!input || typeof input !== 'object') throw new Error('Gemini returned an invalid response.');
@@ -34,11 +40,16 @@ export function validateAgentResult(input: unknown, existingFiles: ProjectFile[]
     if (!operation || typeof operation !== 'object' || !['create', 'update', 'delete', 'rename'].includes((operation as FileOperation).type)) {
       throw new Error('Gemini proposed an unsupported file operation.');
     }
-    const typed = operation as FileOperation;
+    const typed = { ...(operation as FileOperation) };
     assertSafePath(typed.path);
     if (typed.type === 'create' || typed.type === 'update') {
       if (typeof typed.content !== 'string' || typed.content.length > 250_000) throw new Error(`Invalid content for ${typed.path}.`);
-      if (typed.type === 'update' && !known.has(typed.path)) throw new Error(`Cannot update missing file ${typed.path}.`);
+      // Smart healing: adjust create <-> update based on existing files in project
+      if (typed.type === 'create' && known.has(typed.path)) {
+        typed.type = 'update';
+      } else if (typed.type === 'update' && !known.has(typed.path)) {
+        typed.type = 'create';
+      }
       if (paths.has(typed.path)) throw new Error(`More than one operation targets ${typed.path}.`);
       paths.add(typed.path);
       return typed;
@@ -93,7 +104,43 @@ export async function runGeminiAgent(prompt: string, context: ReturnType<typeof 
   const key = process.env.GEMINI_API_KEY?.trim();
   if (!key) throw new Error('Gemini is not configured. Add GEMINI_API_KEY to .env.local.');
   const model = process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
-  const system = `You are a careful coding agent for a persisted Next.js-style project. Return ONLY JSON matching this schema: {"summary":"string","operations":[{"type":"create|update|delete|rename","path":"relative/path", "content":"required for create/update", "newPath":"required for rename", "language":"optional"}],"dependencies":[{"name":"lucide-react|framer-motion|date-fns","version":"semver"}]}. Make minimal targeted changes. Never use shell commands, secrets, binary files, node_modules, or paths containing .. . For generated UI, keep the preview compatible with React/Sandpack: do not import next/*, use relative imports, and use CSS or inline styles rather than Tailwind unless the existing project already supports it.`;
+  const system = `You are an expert Next.js & React AI software engineer for a full-stack web application.
+Your goal is to fulfill the user's request with high-quality, production-ready, modular code.
+
+Analyze the user's request and the existing project tree:
+1. When asked to build a feature, dashboard, page, or application, ALWAYS decompose it into a complete, modular structure:
+   - Create distinct subcomponents in appropriate folders (e.g. components/dashboard/sidebar.tsx, components/dashboard/header.tsx, components/dashboard/stat-card.tsx, components/dashboard/chart.tsx, etc.).
+   - Create or update the main page (e.g. app/page.tsx or app/dashboard/page.tsx) and layouts as needed.
+   - Create helper/data/lib files if state or mock data is needed.
+   - NEVER generate just 1-2 partial files when a complete feature or application was requested.
+2. Operations:
+   - Use 'create' for new files.
+   - Use 'update' for existing files that need modifications (such as updating app/page.tsx to import and assemble new components).
+   - Use 'delete' only when explicitly requested.
+   - Use 'rename' only when explicitly requested.
+   - Do NOT overwrite unrelated existing files.
+3. Code quality & styling:
+   - Write modern React 19 + TypeScript code with 'use client' directives at the top of client components.
+   - Use Tailwind CSS utility classes for styling.
+   - Use icons from 'lucide-react'.
+   - Ensure imports resolve cleanly (use relative imports like '../components/...' or '@/' aliases).
+
+Return ONLY valid JSON matching this schema:
+{
+  "summary": "Concise summary of architecture and files created/updated",
+  "operations": [
+    {
+      "type": "create" | "update" | "delete" | "rename",
+      "path": "relative/path/to/file.tsx",
+      "content": "Full, complete file content (never truncated or commented out)",
+      "newPath": "optional new path for rename",
+      "language": "typescript" | "css" | "json"
+    }
+  ],
+  "dependencies": [
+    { "name": "lucide-react" | "framer-motion" | "date-fns" | "clsx" | "tailwind-merge", "version": "semver" }
+  ]
+}`;
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
   const body = JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [{ text: JSON.stringify({ instruction: prompt, project: context }) }] }], generationConfig: { responseMimeType: 'application/json', temperature: 0.2 } });
   let response: Response | undefined;

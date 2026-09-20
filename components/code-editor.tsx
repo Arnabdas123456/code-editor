@@ -1,6 +1,7 @@
 "use client";
 
-import Editor from "@monaco-editor/react";
+import Editor, { type Monaco } from "@monaco-editor/react";
+import type * as monacoType from "monaco-editor";
 
 type CodeEditorProps = {
   path?: string;
@@ -8,6 +9,8 @@ type CodeEditorProps = {
   language: string;
   onChange: (value: string) => void;
   onSelectionChange?: (value: string) => void;
+  onCursorChange?: (line: number, column: number) => void;
+  onSave?: () => void;
 };
 
 function getMonacoLanguage(language: string) {
@@ -31,7 +34,36 @@ function getMonacoLanguage(language: string) {
   }
 }
 
-export default function CodeEditor({ path, value, language, onChange, onSelectionChange }: CodeEditorProps) {
+export default function CodeEditor({
+  path,
+  value,
+  language,
+  onChange,
+  onSelectionChange,
+  onCursorChange,
+  onSave,
+}: CodeEditorProps) {
+  const handleEditorMount = (
+    editor: monacoType.editor.IStandaloneCodeEditor,
+    monaco: Monaco
+  ) => {
+    editor.onDidChangeCursorSelection(() => {
+      const selection = editor.getSelection();
+      onSelectionChange?.(
+        selection ? editor.getModel()?.getValueInRange(selection) ?? "" : ""
+      );
+    });
+
+    editor.onDidChangeCursorPosition((e) => {
+      onCursorChange?.(e.position.lineNumber, e.position.column);
+    });
+
+    // Monaco shortcut for Cmd+S / Ctrl+S
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+      onSave?.();
+    });
+  };
+
   return (
     <div className="h-full w-full flex-1 overflow-hidden rounded-xl border border-white/10 bg-[#121324]">
       <Editor
@@ -41,12 +73,7 @@ export default function CodeEditor({ path, value, language, onChange, onSelectio
         theme="vs-dark"
         value={value}
         onChange={(nextValue) => onChange(nextValue ?? "")}
-        onMount={(editor) => {
-          editor.onDidChangeCursorSelection(() => {
-            const selection = editor.getSelection();
-            onSelectionChange?.(selection ? editor.getModel()?.getValueInRange(selection) ?? '' : '');
-          });
-        }}
+        onMount={handleEditorMount}
         options={{
           automaticLayout: true,
           minimap: { enabled: false },

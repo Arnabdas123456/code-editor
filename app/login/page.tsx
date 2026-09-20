@@ -20,9 +20,10 @@ function LoginForm() {
 
   const finish = useCallback(async () => {
     await refresh();
-    router.push("/");
+    const nextUrl = search.get("next") || "/editor";
+    router.push(nextUrl);
     router.refresh();
-  }, [refresh, router]);
+  }, [refresh, router, search]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
