@@ -98,18 +98,6 @@ export async function createProject(
       return { data: null, error: new Error(createError?.message || 'Failed to create project') };
     }
 
-    // Initialize starter files for this project
-    const defaultFiles = getDefaultProjectFiles(project.name, project.prompt ?? undefined);
-    const { error: filesError } = await batchUpsertFiles(
-      supabase,
-      project.id,
-      defaultFiles
-    );
-
-    if (filesError) {
-      console.warn('Warning: Could not create starter files:', filesError);
-    }
-
     return { data: project, error: null };
   } catch (err: unknown) {
     console.error('Unexpected error in createProject:', err);

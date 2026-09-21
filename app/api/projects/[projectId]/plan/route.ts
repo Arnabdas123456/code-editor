@@ -65,6 +65,14 @@ export async function POST(
 
     const plan = await runProductManagerAgent(body.idea.trim(), existingPaths);
 
+    // Persist plan and tasks to Supabase
+    try {
+      const { saveProductPlanToDb } = await import('@/lib/db/product');
+      await saveProductPlanToDb(supabase, projectId, plan);
+    } catch (dbErr) {
+      console.warn('Could not persist product plan to DB:', dbErr);
+    }
+
     return NextResponse.json({ plan });
   } catch (error) {
     const status = error instanceof GeminiUnavailableError ? error.status : 500;

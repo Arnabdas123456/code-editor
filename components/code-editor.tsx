@@ -1,5 +1,6 @@
 "use client";
 
+import React, { useRef, useEffect } from "react";
 import Editor, { type Monaco } from "@monaco-editor/react";
 import type * as monacoType from "monaco-editor";
 
@@ -43,10 +44,26 @@ export default function CodeEditor({
   onCursorChange,
   onSave,
 }: CodeEditorProps) {
+  const editorRef = useRef<monacoType.editor.IStandaloneCodeEditor | null>(null);
+
+  useEffect(() => {
+    const handleLayout = () => {
+      editorRef.current?.layout();
+    };
+    window.addEventListener("resize", handleLayout);
+    window.addEventListener("monaco-layout", handleLayout);
+    return () => {
+      window.removeEventListener("resize", handleLayout);
+      window.removeEventListener("monaco-layout", handleLayout);
+    };
+  }, []);
+
   const handleEditorMount = (
     editor: monacoType.editor.IStandaloneCodeEditor,
     monaco: Monaco
   ) => {
+    editorRef.current = editor;
+
     editor.onDidChangeCursorSelection(() => {
       const selection = editor.getSelection();
       onSelectionChange?.(
@@ -62,6 +79,9 @@ export default function CodeEditor({
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       onSave?.();
     });
+
+    // Initial layout recalculation
+    editor.layout();
   };
 
   return (

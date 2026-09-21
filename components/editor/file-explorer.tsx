@@ -76,8 +76,26 @@ function getFileIcon(path: string) {
   if (path.endsWith('.tsx') || path.endsWith('.jsx')) {
     return <Layers className="h-3.5 w-3.5 text-cyan-400 shrink-0" />;
   }
-  if (path.endsWith('.ts') || path.endsWith('.js')) {
+  if (path.endsWith('.ts')) {
     return <FileCode className="h-3.5 w-3.5 text-blue-400 shrink-0" />;
+  }
+  if (path.endsWith('.js') || path.endsWith('.mjs')) {
+    return <FileCode className="h-3.5 w-3.5 text-yellow-400 shrink-0" />;
+  }
+  if (path.endsWith('.py')) {
+    return <FileCode className="h-3.5 w-3.5 text-emerald-400 shrink-0" />;
+  }
+  if (path.endsWith('.java')) {
+    return <FileCode className="h-3.5 w-3.5 text-orange-400 shrink-0" />;
+  }
+  if (path.endsWith('.cpp') || path.endsWith('.cc') || path.endsWith('.cxx') || path.endsWith('.h') || path.endsWith('.hpp') || path.endsWith('.c')) {
+    return <FileCode className="h-3.5 w-3.5 text-purple-400 shrink-0" />;
+  }
+  if (path.endsWith('.go')) {
+    return <FileCode className="h-3.5 w-3.5 text-teal-400 shrink-0" />;
+  }
+  if (path.endsWith('.rs')) {
+    return <FileCode className="h-3.5 w-3.5 text-amber-500 shrink-0" />;
   }
   if (path.endsWith('.json')) {
     return <FileJson className="h-3.5 w-3.5 text-amber-400 shrink-0" />;
@@ -85,10 +103,13 @@ function getFileIcon(path: string) {
   if (path.endsWith('.css') || path.endsWith('.scss')) {
     return <Hash className="h-3.5 w-3.5 text-pink-400 shrink-0" />;
   }
+  if (path.endsWith('.md') || path.endsWith('.markdown')) {
+    return <FileText className="h-3.5 w-3.5 text-indigo-300 shrink-0" />;
+  }
   if (path.endsWith('.svg') || path.endsWith('.png') || path.endsWith('.ico')) {
     return <ImageIcon className="h-3.5 w-3.5 text-emerald-400 shrink-0" />;
   }
-  if (path.endsWith('.config.ts') || path.endsWith('.config.js') || path === 'next.config.js') {
+  if (path.endsWith('.config.ts') || path.endsWith('.config.js') || path === 'next.config.js' || path.startsWith('.env')) {
     return <Settings className="h-3.5 w-3.5 text-slate-400 shrink-0" />;
   }
   return <FileText className="h-3.5 w-3.5 text-slate-400 shrink-0" />;
@@ -411,7 +432,7 @@ export function FileExplorer({
   });
 
   return (
-    <aside className="flex h-full flex-col bg-[#0b0c16] border-r border-white/10 text-xs select-none">
+    <aside className="flex h-full w-full min-w-0 flex-col bg-[#0b0c16] border-r border-white/10 text-xs select-none overflow-hidden">
       {/* Explorer Top Header Bar */}
       <div className="flex h-10 shrink-0 items-center justify-between border-b border-white/10 px-3">
         <div className="flex items-center gap-2">
@@ -487,8 +508,20 @@ export function FileExplorer({
       {/* File Tree List */}
       <ScrollArea className="flex-1 p-1.5">
         {rootChildren.length === 0 ? (
-          <div className="py-8 text-center text-xs text-slate-500">
-            No files in project
+          <div className="py-10 px-3 text-center text-xs text-slate-500 flex flex-col items-center gap-2.5">
+            <span className="font-medium text-slate-400">No files in project</span>
+            <p className="text-[11px] text-slate-500 max-w-[160px]">
+              Create a file manually or generate with AI in Build mode.
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handleOpenCreateFile()}
+              className="h-7 text-[11px] border-white/10 bg-white/5 hover:bg-white/10 text-slate-300 gap-1.5 mt-1"
+            >
+              <FilePlus className="h-3 w-3 text-indigo-400" />
+              <span>New File</span>
+            </Button>
           </div>
         ) : (
           <div className="space-y-0.5">

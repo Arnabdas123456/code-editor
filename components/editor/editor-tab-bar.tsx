@@ -25,7 +25,9 @@ import {
 } from '@/components/ui/dropdown-menu';
 import type { ProjectFile } from '@/lib/types/database';
 
-export type WorkspaceViewMode = 'code' | 'preview' | 'split';
+import { Terminal as TerminalIcon } from 'lucide-react';
+
+export type WorkspaceViewMode = 'code' | 'preview' | 'split' | 'terminal';
 export type ViewportMode = 'desktop' | 'tablet' | 'mobile';
 
 export interface EditorTabBarProps {
@@ -39,20 +41,43 @@ export interface EditorTabBarProps {
   setViewMode: (mode: WorkspaceViewMode) => void;
   viewport: ViewportMode;
   setViewport: (viewport: ViewportMode) => void;
+  showTerminal?: boolean;
+  onToggleTerminal?: () => void;
 }
 
 function getFileIcon(path: string) {
   if (path.endsWith('.tsx') || path.endsWith('.jsx')) {
     return <Layers className="h-3.5 w-3.5 text-cyan-400 shrink-0" />;
   }
-  if (path.endsWith('.ts') || path.endsWith('.js')) {
+  if (path.endsWith('.ts')) {
     return <FileCode className="h-3.5 w-3.5 text-blue-400 shrink-0" />;
+  }
+  if (path.endsWith('.js') || path.endsWith('.mjs')) {
+    return <FileCode className="h-3.5 w-3.5 text-yellow-400 shrink-0" />;
+  }
+  if (path.endsWith('.py')) {
+    return <FileCode className="h-3.5 w-3.5 text-emerald-400 shrink-0" />;
+  }
+  if (path.endsWith('.java')) {
+    return <FileCode className="h-3.5 w-3.5 text-orange-400 shrink-0" />;
+  }
+  if (path.endsWith('.cpp') || path.endsWith('.cc') || path.endsWith('.cxx') || path.endsWith('.h') || path.endsWith('.hpp') || path.endsWith('.c')) {
+    return <FileCode className="h-3.5 w-3.5 text-purple-400 shrink-0" />;
+  }
+  if (path.endsWith('.go')) {
+    return <FileCode className="h-3.5 w-3.5 text-teal-400 shrink-0" />;
+  }
+  if (path.endsWith('.rs')) {
+    return <FileCode className="h-3.5 w-3.5 text-amber-500 shrink-0" />;
   }
   if (path.endsWith('.json')) {
     return <FileJson className="h-3.5 w-3.5 text-amber-400 shrink-0" />;
   }
   if (path.endsWith('.css') || path.endsWith('.scss')) {
     return <Hash className="h-3.5 w-3.5 text-pink-400 shrink-0" />;
+  }
+  if (path.endsWith('.md') || path.endsWith('.markdown')) {
+    return <FileText className="h-3.5 w-3.5 text-indigo-300 shrink-0" />;
   }
   return <FileText className="h-3.5 w-3.5 text-slate-400 shrink-0" />;
 }
@@ -68,6 +93,8 @@ export function EditorTabBar({
   setViewMode,
   viewport,
   setViewport,
+  showTerminal,
+  onToggleTerminal,
 }: EditorTabBarProps) {
   // Breadcrumb segments derived from activePath
   const breadcrumbs = activePath ? activePath.split('/') : [];
@@ -238,12 +265,32 @@ export function EditorTabBar({
               <Columns2 className="h-3 w-3 text-cyan-400" />
               <span className="hidden md:inline">Split</span>
             </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                if (onToggleTerminal) {
+                  onToggleTerminal();
+                } else {
+                  setViewMode('terminal');
+                }
+              }}
+              className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition ${
+                showTerminal || viewMode === 'terminal'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white hover:bg-white/5'
+              }`}
+              title={showTerminal ? 'Hide Bottom Terminal' : 'Show Bottom Terminal'}
+            >
+              <TerminalIcon className="h-3 w-3 text-emerald-400" />
+              <span className="hidden md:inline">Terminal</span>
+            </button>
           </div>
         </div>
       </div>
 
-      {/* Lower Row: Breadcrumbs */}
-      {breadcrumbs.length > 0 && (
+      {/* Lower Row: Breadcrumbs (only when viewing code) */}
+      {breadcrumbs.length > 0 && (viewMode === 'code' || viewMode === 'split') && (
         <div className="flex h-6 items-center gap-1.5 border-t border-white/5 px-3 text-[11px] text-slate-500 bg-[#090b14]">
           {breadcrumbs.map((segment, idx) => {
             const isLast = idx === breadcrumbs.length - 1;

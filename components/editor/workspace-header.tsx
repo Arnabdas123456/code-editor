@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
 import {
   FolderTree,
@@ -14,6 +14,9 @@ import {
   Command,
   Code2,
   Compass,
+  Play,
+  Edit2,
+  X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -38,6 +41,8 @@ export interface WorkspaceHeaderProps {
   onToggleFiles: () => void;
   showAiPanel: boolean;
   onToggleAiPanel: () => void;
+  onRenameProject?: (newName: string) => Promise<void> | void;
+  onRunPreview?: () => void;
 }
 
 export function WorkspaceHeader({
@@ -54,7 +59,28 @@ export function WorkspaceHeader({
   onToggleFiles,
   showAiPanel,
   onToggleAiPanel,
+  onRenameProject,
+  onRunPreview,
 }: WorkspaceHeaderProps) {
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [nameInput, setNameInput] = useState('');
+
+  const handleStartRename = () => {
+    setNameInput(project?.name ?? 'Untitled Project');
+    setIsEditingName(true);
+  };
+
+  const handleConfirmRename = async () => {
+    if (!nameInput.trim()) {
+      setIsEditingName(false);
+      return;
+    }
+    if (onRenameProject && nameInput.trim() !== project?.name) {
+      await onRenameProject(nameInput.trim());
+    }
+    setIsEditingName(false);
+  };
+
   return (
     <header className="relative flex h-12 shrink-0 items-center justify-between bg-[#0b0c18] border-b border-white/10 px-4 select-none z-10">
       {/* Bottom glowing line during active AI synthesis */}
@@ -82,22 +108,69 @@ export function WorkspaceHeader({
             <Sparkles className="h-3.5 w-3.5 text-white" />
           </span>
           <span className="font-bold tracking-tight text-white hidden sm:inline">
-            AI Studio
+            Codatron.ai
           </span>
         </Link>
 
         <ChevronRight className="h-3.5 w-3.5 text-slate-600 hidden sm:block" />
 
-        {/* Project Name + Model */}
-        <div className="flex items-center gap-2 min-w-0">
-          <h1 className="truncate text-xs sm:text-[13px] font-semibold text-slate-100 max-w-[150px] sm:max-w-[220px]">
-            {project?.name ?? 'Loading…'}
-          </h1>
+        {/* Project Name (Editable) */}
+        <div className="flex items-center gap-1.5 min-w-0">
+          {isEditingName ? (
+            <div className="flex items-center gap-1">
+              <input
+                type="text"
+                value={nameInput}
+                onChange={(e) => setNameInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void handleConfirmRename();
+                  if (e.key === 'Escape') setIsEditingName(false);
+                }}
+                autoFocus
+                className="rounded border border-indigo-500/50 bg-black/60 px-2 py-0.5 text-xs text-white outline-none w-36 sm:w-48"
+              />
+              <button
+                type="button"
+                onClick={() => void handleConfirmRename()}
+                className="rounded p-1 text-emerald-400 hover:bg-white/10"
+                title="Save Name"
+              >
+                <Check className="h-3 w-3" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsEditingName(false)}
+                className="rounded p-1 text-slate-400 hover:bg-white/10"
+                title="Cancel"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          ) : (
+            <div className="group flex items-center gap-1.5">
+              <h1
+                onClick={handleStartRename}
+                className="truncate text-xs sm:text-[13px] font-semibold text-slate-100 max-w-[150px] sm:max-w-[220px] cursor-pointer hover:text-indigo-300 transition"
+                title="Click to rename project"
+              >
+                {project?.name ?? 'Loading…'}
+              </h1>
+              <button
+                type="button"
+                onClick={handleStartRename}
+                className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-slate-400 hover:text-white transition"
+                title="Rename Project"
+              >
+                <Edit2 className="h-2.5 w-2.5" />
+              </button>
+            </div>
+          )}
+
           <Badge
             variant="outline"
             className="hidden md:inline-flex border-indigo-500/30 bg-indigo-500/10 text-[10px] font-medium text-indigo-300 py-0 px-1.5"
           >
-            Gemini Flash
+            Gemini
           </Badge>
         </div>
       </div>
@@ -146,8 +219,28 @@ export function WorkspaceHeader({
         </button>
       </div>
 
-      {/* Right: Actions, Panels, Save, Export */}
+      {/* Right: Actions, Run/Preview, Save, Export, Panel Toggles */}
       <div className="flex items-center gap-2">
+        {/* Run / Preview button */}
+        {onRunPreview && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onRunPreview}
+                className="h-8 px-2.5 text-xs font-medium border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 gap-1.5"
+              >
+                <Play className="h-3 w-3 fill-emerald-400 text-emerald-400" />
+                <span className="hidden sm:inline">Preview</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-xs">
+              Run & Preview Application
+            </TooltipContent>
+          </Tooltip>
+        )}
+
         {/* Toggle File Explorer */}
         <Tooltip>
           <TooltipTrigger asChild>

@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "db:push": "npx supabase db push --yes",
+    "db:reset": "npx supabase db reset"
   },
   "dependencies": {
     "@codesandbox/sandpack-react": "^2.20.0",
@@ -40,11 +42,15 @@
     "@radix-ui/react-tooltip": "^1.2.16",
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.116.0",
+    "@webcontainer/api": "^1.6.4",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "embla-carousel-react": "^8.6.0",
     "framer-motion": "^13.4.0",
+    "inngest": "^4.20.0",
     "input-otp": "^1.5.0",
     "jszip": "^3.10.2",
     "lucide-react": "^1.47.0",

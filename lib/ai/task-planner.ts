@@ -24,8 +24,9 @@ export async function planTechnicalTask(
   const model = process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
 
   const fileTree = existingFiles.map((f) => f.path);
+  const affected = task.affectedFiles || [];
   const relevantFiles = existingFiles
-    .filter((f) => !f.is_folder && (task.affectedFiles.includes(f.path) || f.path === 'app/page.tsx' || f.path.startsWith('components/')))
+    .filter((f) => !f.is_folder && (affected.includes(f.path) || f.path === 'app/page.tsx' || f.path.startsWith('components/')))
     .slice(0, 8)
     .map((f) => ({ path: f.path, content: f.content.slice(0, 6000) }));
 

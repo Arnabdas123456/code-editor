@@ -14,6 +14,7 @@ import {
   Lightbulb,
   FileCode,
   Layers,
+  Terminal as TerminalIcon,
 } from 'lucide-react';
 import {
   CommandDialog,
@@ -34,6 +35,7 @@ export interface CommandPaletteProps {
   onSave: () => void;
   onExportZip: () => void;
   onSelectViewMode: (mode: 'code' | 'preview' | 'split') => void;
+  onToggleTerminal?: () => void;
   onSelectAiMode: (mode: 'build' | 'code' | 'debug' | 'product') => void;
   onNewFile: () => void;
   onNewFolder: () => void;
@@ -47,6 +49,7 @@ export function CommandPalette({
   onSave,
   onExportZip,
   onSelectViewMode,
+  onToggleTerminal,
   onSelectAiMode,
   onNewFile,
   onNewFolder,
@@ -140,6 +143,17 @@ export function CommandPalette({
           >
             <Columns2 className="h-4 w-4 text-cyan-400" />
             <span>Switch to Split View (Code + Preview)</span>
+          </CommandItem>
+
+          <CommandItem
+            onSelect={() => {
+              onToggleTerminal?.();
+              onOpenChange(false);
+            }}
+            className="gap-2 cursor-pointer focus:bg-indigo-600 focus:text-white"
+          >
+            <TerminalIcon className="h-4 w-4 text-emerald-400" />
+            <span>Toggle Bottom Terminal Panel</span>
           </CommandItem>
         </CommandGroup>
 

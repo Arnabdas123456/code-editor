@@ -10,6 +10,9 @@ interface GoogleAccountsId {
   initialize: (config: {
     client_id: string;
     callback: (response: GoogleCredentialResponse) => void;
+    auto_select?: boolean;
+    cancel_on_tap_outside?: boolean;
+    context?: string;
   }) => void;
   renderButton: (parent: HTMLElement, options: Record<string, unknown>) => void;
 }
@@ -43,6 +46,8 @@ export default function GoogleSignIn({ onSuccess, onError }: { onSuccess: () => 
 
     window.google.accounts.id.initialize({
       client_id: clientId,
+      auto_select: false,
+      cancel_on_tap_outside: true,
       callback: async ({ credential }: { credential: string }) => {
         const result = await fetch("/api/auth/google", {
           method: "POST",
@@ -64,6 +69,7 @@ export default function GoogleSignIn({ onSuccess, onError }: { onSuccess: () => 
       width: 360,
       text: "continue_with",
       shape: "rectangular",
+      logo_alignment: "left",
     });
   }, [ready, clientId]);
 

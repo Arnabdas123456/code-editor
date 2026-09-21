@@ -1,50 +1,44 @@
 "use client";
 
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   SandpackLayout,
   SandpackPreview,
   SandpackProvider,
-  useSandpack,
-  useSandpackConsole,
 } from '@codesandbox/sandpack-react';
-import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
-  CheckCircle2,
-  ChevronDown,
-  ChevronUp,
-  Info,
-  Monitor,
-  Smartphone,
   Sparkles,
-  Tablet,
   X,
+  RotateCcw,
+  ExternalLink,
+  Loader2,
+  Play,
+  Terminal,
+  Server,
 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import type { ProjectFile } from '@/lib/types/database';
+import { buildSandpackBundle } from '@/lib/preview/sandpack-adapter';
 import {
-  buildSandpackBundle,
-} from '@/lib/preview/sandpack-adapter';
+  webcontainerManager,
+  type WebContainerRuntimeSnapshot,
+} from '@/lib/runtime/webcontainer-manager';
 
 export type ViewportMode = 'desktop' | 'tablet' | 'mobile';
 
-interface LivePreviewProps {
+export interface LivePreviewProps {
   files: ProjectFile[];
   dependencies?: Array<{ name: string; version: string }>;
   mobile?: boolean;
   controlledViewport?: ViewportMode;
   onPreviewError?: (error: string) => void;
   onFixWithAI?: (error: string) => void;
+  webcontainerUrl?: string | null;
+  onSwitchToTerminal?: () => void;
 }
 
-/**
- * Dedicated Sandpack Live Preview Component.
- * Powered by buildSandpackBundle adapter:
- * - Next.js shims for link, image, navigation, router, fonts
- * - Safe Tailwind Play CDN configuration in preview iframe
- * - Preserves user source files untouched
- * - Real React compile and runtime error reporting
- * - 1-click "Fix with AI" integration
- */
 export default function LivePreview({
   files,
   dependencies = [],
@@ -52,271 +46,316 @@ export default function LivePreview({
   controlledViewport,
   onPreviewError,
   onFixWithAI,
+  webcontainerUrl,
+  onSwitchToTerminal,
 }: LivePreviewProps) {
   const [internalViewport, setInternalViewport] = useState<ViewportMode>(
     mobile ? 'mobile' : 'desktop'
   );
-  const [showDetections, setShowDetections] = useState(false);
   const [activeError, setActiveError] = useState<string | null>(null);
+  const [iframeKey, setIframeKey] = useState(0);
+  const [runtimeSnapshot, setRuntimeSnapshot] = useState<WebContainerRuntimeSnapshot>(
+    webcontainerManager.getSnapshot()
+  );
 
   const viewport = controlledViewport || internalViewport;
 
-  // Run the Sandpack Preview Adapter on the current frontend files state
+  // Subscribe to WebContainer state changes
+  useEffect(() => {
+    const unsub = webcontainerManager.subscribeSnapshot((snap) => {
+      setRuntimeSnapshot(snap);
+      if (snap.lastError) {
+        setActiveError(snap.lastError.message);
+        onPreviewError?.(snap.lastError.message);
+      }
+    });
+    return unsub;
+  }, [onPreviewError]);
+
+  const effectiveUrl = webcontainerUrl || runtimeSnapshot.previewUrl;
+
+  // Check if project is Next.js
+  const isNextJs = files.some(
+    (f) =>
+      (f.path === 'package.json' && f.content.includes('"next"')) ||
+      f.path.startsWith('app/') ||
+      f.path.includes('next.config')
+  );
+
+  // Build sandpack bundle only for genuine compatible non-Next.js projects
   const bundle = useMemo(() => {
+    if (isNextJs || files.length === 0) return null;
     return buildSandpackBundle(files, dependencies);
-  }, [files, dependencies]);
+  }, [files, dependencies, isNextJs]);
 
-  // Report errors up to the editor state for AI debugging
-  const handleErrorOccurred = (errorText: string) => {
-    setActiveError(errorText);
-    onPreviewError?.(errorText);
+  const handleRefresh = () => {
+    setIframeKey((prev) => prev + 1);
   };
 
-  const handleClearError = () => {
-    setActiveError(null);
-  };
+  const viewportWidthStyle = {
+    desktop: 'w-full h-full',
+    tablet: 'w-[768px] max-w-full h-full shadow-2xl rounded-t-xl border-x border-t border-white/10 overflow-hidden',
+    mobile: 'w-[390px] max-w-full h-full shadow-2xl rounded-t-xl border-x border-t border-white/10 overflow-hidden',
+  }[viewport];
 
-  if (bundle.adapterError) {
+  // Empty Project state
+  if (files.length === 0) {
     return (
-      <div className="flex h-full flex-col items-center justify-center p-8 text-center text-slate-400 bg-[#0c0d16]">
-        <div className="mb-4 rounded-full bg-blue-500/10 p-3 text-blue-400">
-          <Info className="h-6 w-6" />
+      <div className="flex h-full flex-col items-center justify-center p-8 text-center bg-[#0a0b16] select-none">
+        <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-600/10 text-indigo-400 border border-indigo-500/20 mb-4 shadow-xl">
+          <Play className="h-6 w-6 ml-0.5" />
         </div>
-        <h3 className="mb-1 text-base font-semibold text-slate-200">
-          Preview Ready to Start
+        <h3 className="text-base font-bold text-white mb-1">
+          No Files Generated Yet
         </h3>
-        <p className="max-w-md text-sm text-slate-400">
-          {bundle.adapterError}
+        <p className="max-w-md text-xs text-slate-400 leading-relaxed mb-4">
+          Start by describing your application in the AI Assistant (Build mode) on the right, or create files in the File Explorer.
         </p>
+        <div className="flex items-center gap-2">
+          <Badge variant="outline" className="border-white/10 text-slate-400 text-[11px] py-1 px-3">
+            Build Mode: Full Application Generation
+          </Badge>
+        </div>
       </div>
     );
   }
 
-  const viewportClasses = {
-    desktop: 'w-full h-full',
-    tablet: 'mx-auto max-w-[768px] h-full shadow-2xl rounded-t-xl overflow-hidden border-x border-t border-white/10',
-    mobile: 'mx-auto max-w-[390px] h-full shadow-2xl rounded-t-xl overflow-hidden border-x border-t border-white/10',
-  }[viewport];
-
   return (
-    <div className="flex h-full flex-col bg-[#090a12]">
+    <div className="flex h-full flex-col bg-[#090a14] overflow-hidden select-none">
       {/* Top Preview Control Bar */}
-      <div className="flex h-10 shrink-0 items-center justify-between border-b border-white/10 bg-[#0d0f1a] px-3 text-xs text-slate-300">
-        {/* Left: Responsive Viewport Switcher */}
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={() => setInternalViewport('desktop')}
-            title="Desktop view"
-            className={`flex items-center gap-1 rounded px-2 py-1 transition ${viewport === 'desktop'
-              ? 'bg-blue-500/20 text-blue-400 font-medium'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-              }`}
+      <div className="h-9 px-3 border-b border-white/10 bg-[#0c0e1c] flex items-center justify-between shrink-0 text-xs">
+        {/* Left: Status / URL */}
+        <div className="flex items-center gap-2 min-w-0">
+          <span
+            className={`flex h-2 w-2 rounded-full ${
+              effectiveUrl
+                ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]'
+                : runtimeSnapshot.state === 'error'
+                ? 'bg-red-500'
+                : 'bg-amber-400 animate-pulse'
+            }`}
+          />
+          <span className="font-mono text-[11px] text-slate-400 truncate max-w-[200px] sm:max-w-[320px]">
+            {effectiveUrl || 'http://localhost:3000'}
+          </span>
+          <Badge
+            variant="outline"
+            className={`text-[9px] uppercase py-0 px-1.5 ${
+              effectiveUrl
+                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                : runtimeSnapshot.state === 'error'
+                ? 'border-red-500/30 bg-red-500/10 text-red-300'
+                : 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+            }`}
           >
-            <Monitor className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Desktop</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setInternalViewport('tablet')}
-            title="Tablet view (768px)"
-            className={`flex items-center gap-1 rounded px-2 py-1 transition ${viewport === 'tablet'
-              ? 'bg-blue-500/20 text-blue-400 font-medium'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-              }`}
-          >
-            <Tablet className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Tablet</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setInternalViewport('mobile')}
-            title="Mobile view (390px)"
-            className={`flex items-center gap-1 rounded px-2 py-1 transition ${viewport === 'mobile'
-              ? 'bg-blue-500/20 text-blue-400 font-medium'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-              }`}
-          >
-            <Smartphone className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Mobile</span>
-          </button>
-        </div>
-
-        {/* Right: Compatibility Status Badges */}
-        <div className="flex items-center gap-2">
-          {bundle.hasTailwind && (
-            <span className="hidden items-center rounded-full bg-cyan-500/10 px-2 py-0.5 text-[11px] font-medium text-cyan-400 md:inline-flex">
-              Tailwind CDN
+            {effectiveUrl ? 'WebContainer Live' : `Runtime: ${runtimeSnapshot.state}`}
+          </Badge>
+          {runtimeSnapshot.framework !== 'unknown' && (
+            <span className="text-[10px] text-slate-500 hidden md:inline">
+              • {runtimeSnapshot.framework.toUpperCase()}
             </span>
           )}
+        </div>
 
-          {bundle.nextJsDetections.length > 0 && (
-            <button
-              type="button"
-              onClick={() => setShowDetections((prev) => !prev)}
-              className="flex items-center gap-1 rounded-full bg-blue-500/10 px-2 py-0.5 text-[11px] text-blue-300 hover:bg-blue-500/20 transition"
-              title="Next.js Compatibility Status"
+        {/* Right: Actions */}
+        <div className="flex items-center gap-1.5">
+          {onSwitchToTerminal && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onSwitchToTerminal}
+              className="h-6 px-2 text-[11px] text-slate-400 hover:text-white hover:bg-white/5 gap-1"
+              title="Open Terminal output"
             >
-              <CheckCircle2 className="h-3 w-3 text-blue-400" />
-              <span>{bundle.nextJsDetections.length} Next.js API{bundle.nextJsDetections.length > 1 ? 's' : ''} shimmed</span>
-              {showDetections ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-            </button>
+              <Terminal className="h-3 w-3" />
+              <span className="hidden sm:inline">Terminal</span>
+            </Button>
+          )}
+
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleRefresh}
+            className="h-6 w-6 p-0 text-slate-400 hover:text-white hover:bg-white/5"
+            title="Reload Preview"
+          >
+            <RotateCcw className="h-3 w-3" />
+          </Button>
+
+          {effectiveUrl && (
+            <a
+              href={effectiveUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="p-1 rounded text-slate-400 hover:text-white hover:bg-white/5"
+              title="Open in new window"
+            >
+              <ExternalLink className="h-3 w-3" />
+            </a>
           )}
         </div>
       </div>
 
-      {/* Detections Drawer */}
-      {showDetections && bundle.nextJsDetections.length > 0 && (
-        <div className="border-b border-white/10 bg-[#121422] p-3 text-xs">
-          <div className="mb-2 flex items-center justify-between">
-            <span className="font-semibold text-slate-300">
-              Next.js Preview Compatibility Layer
-            </span>
+      {/* Main Preview Frame */}
+      <div className="flex-1 flex justify-center items-stretch overflow-hidden bg-[#070810] p-2 sm:p-3">
+        <div className={`transition-all duration-300 flex flex-col ${viewportWidthStyle}`}>
+          {effectiveUrl ? (
+            /* Real WebContainer Live Application */
+            <iframe
+              key={iframeKey}
+              src={effectiveUrl}
+              className="w-full h-full border-0 bg-white rounded-md shadow-inner"
+              title="WebContainer Live Application Preview"
+              allow="cross-origin-isolated; autoplay; camera; microphone"
+            />
+          ) : runtimeSnapshot.state === 'installing' ||
+            runtimeSnapshot.state === 'starting' ||
+            runtimeSnapshot.state === 'mounting' ||
+            runtimeSnapshot.state === 'initializing' ? (
+            /* Live Build Progress State */
+            <div className="flex h-full flex-col items-center justify-center p-8 text-center bg-[#0a0c18] rounded-md border border-white/5">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-indigo-600/10 text-indigo-400 border border-indigo-500/20 mb-3 animate-pulse">
+                <Loader2 className="h-6 w-6 animate-spin text-indigo-400" />
+              </div>
+              <h4 className="text-sm font-semibold text-white mb-1 capitalize">
+                {runtimeSnapshot.state === 'installing'
+                  ? 'Installing Dependencies…'
+                  : runtimeSnapshot.state === 'starting'
+                  ? 'Starting Development Server…'
+                  : runtimeSnapshot.state === 'mounting'
+                  ? 'Mounting Project Files…'
+                  : 'Booting WebContainer Runtime…'}
+              </h4>
+              <p className="max-w-sm text-xs text-slate-400 mb-4">
+                {runtimeSnapshot.state === 'installing'
+                  ? `Executing $ ${runtimeSnapshot.packageManager} install in virtual Node.js kernel`
+                  : runtimeSnapshot.state === 'starting'
+                  ? 'Launching dev server and waiting for port readiness…'
+                  : 'Preparing virtual filesystem and environment'}
+              </p>
+              {onSwitchToTerminal && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={onSwitchToTerminal}
+                  className="h-7 text-xs border-white/10 text-slate-300 hover:bg-white/10 gap-1.5"
+                >
+                  <Terminal className="h-3 w-3" />
+                  <span>View Live Output in Terminal</span>
+                </Button>
+              )}
+            </div>
+          ) : runtimeSnapshot.state === 'error' ? (
+            /* Runtime Error Card with Fix with AI */
+            <div className="flex h-full flex-col items-center justify-center p-8 text-center bg-[#100808] rounded-md border border-red-500/20">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-red-600/10 text-red-400 border border-red-500/30 mb-3">
+                <AlertTriangle className="h-6 w-6 text-red-400" />
+              </div>
+              <h4 className="text-sm font-semibold text-red-200 mb-1">Runtime Execution Error</h4>
+              <p className="max-w-md text-xs text-red-400/80 mb-4 font-mono bg-red-950/40 p-2.5 rounded border border-red-500/20 text-left overflow-auto max-h-32">
+                {activeError || runtimeSnapshot.lastError?.message || 'Development server encountered an error.'}
+              </p>
+              <div className="flex items-center gap-2">
+                {onFixWithAI && (
+                  <Button
+                    size="sm"
+                    onClick={() => onFixWithAI(activeError || runtimeSnapshot.lastError?.message || 'Runtime error')}
+                    className="h-8 text-xs bg-red-600 hover:bg-red-500 text-white font-medium gap-1.5"
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    <span>Fix with AI Debug Agent</span>
+                  </Button>
+                )}
+                {onSwitchToTerminal && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={onSwitchToTerminal}
+                    className="h-8 text-xs border-white/10 text-slate-300 hover:bg-white/10 gap-1.5"
+                  >
+                    <Terminal className="h-3.5 w-3.5" />
+                    <span>Open Terminal</span>
+                  </Button>
+                )}
+              </div>
+            </div>
+          ) : bundle && !bundle.adapterError ? (
+            /* Sandpack Live Preview strictly for simple non-Next.js projects */
+            <div className="w-full h-full rounded-md overflow-hidden bg-[#0d0f1e] relative">
+              <SandpackProvider
+                template="react-ts"
+                theme="dark"
+                files={bundle.sandpackFiles}
+                customSetup={{
+                  dependencies: bundle.dependencies,
+                  entry: bundle.entryPath,
+                }}
+                options={{
+                  recompileMode: 'delayed',
+                  recompileDelay: 300,
+                }}
+              >
+                <SandpackLayout className="!border-0 !h-full !w-full !rounded-none">
+                  <SandpackPreview
+                    className="!h-full !w-full"
+                    showNavigator={false}
+                    showOpenInCodeSandbox={false}
+                    showRefreshButton={false}
+                  />
+                </SandpackLayout>
+              </SandpackProvider>
+            </div>
+          ) : (
+            /* Standby State */
+            <div className="flex h-full flex-col items-center justify-center p-6 text-center text-slate-400 bg-[#0c0d16] rounded-md">
+              <Server className="h-8 w-8 text-indigo-400 mb-2 opacity-60" />
+              <p className="text-xs max-w-sm text-slate-300 mb-1">Development Server Ready to Launch</p>
+              <p className="text-[11px] text-slate-500 mb-4">
+                Click Build App in the AI Assistant, or run the dev server from the Terminal.
+              </p>
+              {onSwitchToTerminal && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={onSwitchToTerminal}
+                  className="h-7 text-xs border-white/10 text-slate-300 hover:bg-white/10 gap-1.5"
+                >
+                  <Terminal className="h-3 w-3" />
+                  <span>Open Terminal</span>
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Error Floating Banner with Fix with AI */}
+      {activeError && (
+        <div className="p-3 border-t border-red-500/30 bg-red-950/40 flex items-center justify-between text-xs text-red-300">
+          <div className="flex items-center gap-2 truncate mr-2">
+            <AlertTriangle className="h-4 w-4 text-red-400 shrink-0" />
+            <span className="truncate font-mono text-[11px]">{activeError}</span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {onFixWithAI && (
+              <Button
+                size="sm"
+                onClick={() => onFixWithAI(activeError)}
+                className="h-6 text-xs bg-red-600 hover:bg-red-500 text-white font-medium"
+              >
+                Fix with AI Debug Agent
+              </Button>
+            )}
             <button
               type="button"
-              onClick={() => setShowDetections(false)}
-              className="text-slate-400 hover:text-white"
+              onClick={() => setActiveError(null)}
+              className="p-1 text-slate-400 hover:text-white"
             >
-              <X className="h-3.5 w-3.5" />
+              <X className="h-3 w-3" />
             </button>
-          </div>
-          <div className="space-y-1 max-h-32 overflow-y-auto">
-            {bundle.nextJsDetections.map((det, idx) => (
-              <div
-                key={idx}
-                className="flex items-start gap-2 rounded bg-white/5 px-2 py-1 text-[11px]"
-              >
-                <span className="font-mono text-cyan-400">{det.api}</span>
-                <span className="text-slate-400">in {det.path}</span>
-                <span className="ml-auto text-slate-500">{det.message}</span>
-              </div>
-            ))}
           </div>
         </div>
       )}
-
-      {/* Sandpack Provider & Frame */}
-      <div className="relative min-h-0 flex-1 overflow-hidden p-2">
-        <div className={viewportClasses}>
-          <SandpackProvider
-            template="react-ts"
-            theme="dark"
-            files={bundle.sandpackFiles}
-            customSetup={{
-              entry: '/index.tsx',
-              dependencies: bundle.dependencies,
-            }}
-            options={{
-              autorun: true,
-              recompileMode: 'delayed',
-              recompileDelay: 300,
-              activeFile: '/App.tsx',
-              visibleFiles: [],
-            }}
-          >
-            {/* Real-time Error Interceptor */}
-            <SandpackErrorReporter
-              onError={handleErrorOccurred}
-              onClearError={handleClearError}
-            />
-
-            <SandpackLayout className="!h-full !rounded-none !border-0">
-              <SandpackPreview
-                className="!h-full !min-h-0 !bg-[#0f0f1a]"
-                showOpenInCodeSandbox={false}
-                showRefreshButton
-              />
-            </SandpackLayout>
-          </SandpackProvider>
-        </div>
-
-        {/* Floating Error Banner with "Fix with AI" */}
-        {activeError && (
-          <div className="absolute inset-x-4 bottom-4 z-20 rounded-xl border border-red-500/40 bg-[#160f1c]/95 p-4 shadow-2xl backdrop-blur">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-start gap-3">
-                <div className="rounded-lg bg-red-500/10 p-2 text-red-400">
-                  <AlertTriangle className="h-5 w-5" />
-                </div>
-                <div>
-                  <h4 className="text-sm font-semibold text-red-200">
-                    Preview Compilation or Runtime Error
-                  </h4>
-                  <p className="mt-1 line-clamp-2 text-xs font-mono text-red-300/90">
-                    {activeError}
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex shrink-0 items-center gap-2">
-                {onFixWithAI && (
-                  <button
-                    type="button"
-                    onClick={() => onFixWithAI(activeError)}
-                    className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-violet-600 to-indigo-600 px-3 py-1.5 text-xs font-medium text-white shadow-lg shadow-indigo-500/20 hover:brightness-110 active:scale-95 transition"
-                  >
-                    <Sparkles className="h-3.5 w-3.5 text-amber-300" />
-                    Fix with AI
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={handleClearError}
-                  className="rounded p-1 text-slate-400 hover:bg-white/10 hover:text-white transition"
-                  title="Dismiss error"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
     </div>
   );
-}
-
-// -----------------------------------------------------------------------------
-// Sandpack Error Reporter Hook
-// -----------------------------------------------------------------------------
-
-function SandpackErrorReporter({
-  onError,
-  onClearError,
-}: {
-  onError: (errorText: string) => void;
-  onClearError: () => void;
-}) {
-  const { sandpack } = useSandpack();
-  const { logs } = useSandpackConsole({
-    resetOnPreviewRestart: true,
-    showSyntaxError: true,
-  });
-
-  // Listen to bundler compilation / syntax errors
-  useEffect(() => {
-    if (sandpack.error) {
-      const errorMsg = sandpack.error.message || String(sandpack.error);
-      onError(errorMsg);
-    } else if (sandpack.status === 'done') {
-      onClearError();
-    }
-  }, [sandpack.error, sandpack.status, onError, onClearError]);
-
-  // Listen to runtime console errors
-  useEffect(() => {
-    const errorLogs = logs.filter((log) => log.method === 'error');
-    if (errorLogs.length > 0) {
-      const lastError = errorLogs[errorLogs.length - 1];
-      const details = (lastError.data || [])
-        .map((entry) => (typeof entry === 'string' ? entry : JSON.stringify(entry)))
-        .join(' ');
-
-      if (details.trim()) {
-        onError(details);
-      }
-    }
-  }, [logs, onError]);
-
-  return null;
 }

@@ -2,7 +2,19 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Loader2, FileQuestion } from 'lucide-react';
+import Script from 'next/script';
+import {
+  Loader2,
+  FileQuestion,
+  Sparkles,
+  Plus,
+  Compass,
+  FilePlus,
+  Terminal as TerminalIcon,
+  Play,
+  Layers,
+  Code2,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import CodeEditor from '@/components/code-editor';
 import LivePreview, { ViewportMode } from '@/components/live-preview';
@@ -13,32 +25,29 @@ import {
   EditorTabBar,
   WorkspaceViewMode,
 } from '@/components/editor/editor-tab-bar';
-
+import { TerminalPanel } from '@/components/editor/terminal-panel';
+import { webcontainerManager } from '@/lib/runtime/webcontainer-manager';
 import { StatusBar } from '@/components/editor/status-bar';
 import { CommandPalette } from '@/components/editor/command-palette';
+import { Button } from '@/components/ui/button';
 import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
 } from '@/components/ui/resizable';
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet';
 import { useAuth } from '@/components/auth-provider';
 import { createClient } from '@/lib/client';
 import {
   createProject,
+  getProjectById,
   getProjectFiles,
   getProjects,
+  updateProject,
   saveProjectFile,
   deleteProjectFile,
   renameProjectFile,
 } from '@/lib/db';
-import { batchUpsertFiles } from '@/lib/db/files';
-import { getDefaultProjectFiles } from '@/lib/db/starter-template';
+import { getProductPlanFromDb, saveProductPlanToDb } from '@/lib/db/product';
 import { exportProjectToZip } from '@/lib/export/zip';
 import { ProductWorkspace } from '@/components/product/product-workspace';
 import type { ProductPlan } from '@/lib/ai/product-planner';
@@ -49,7 +58,10 @@ type AgentResponse = {
   files: ProjectFile[];
   operations: Array<{ type: string; path: string; newPath?: string }>;
   dependencies: Array<{ name: string; version: string }>;
+  projectName?: string;
 };
+
+export type ProjectStatus = 'loading' | 'empty' | 'ready' | 'error';
 
 export default function EditorPage() {
   const router = useRouter();
@@ -58,6 +70,7 @@ export default function EditorPage() {
 
   // Project and files state
   const [project, setProject] = useState<Project | null>(null);
+  const [projectStatus, setProjectStatus] = useState<ProjectStatus>('loading');
   const [files, setFiles] = useState<ProjectFile[]>([]);
   const [openTabs, setOpenTabs] = useState<string[]>([]);
   const [activePath, setActivePath] = useState('');
@@ -67,11 +80,20 @@ export default function EditorPage() {
   // View & responsive modes
   const [viewMode, setViewMode] = useState<WorkspaceViewMode>('code');
   const [viewport, setViewport] = useState<ViewportMode>('desktop');
-  const [mobileDrawer, setMobileDrawer] = useState<'files' | 'ai' | null>(null);
 
-  // Panel visibility
+  // WebContainer running server URL
+  const [webcontainerUrl, setWebcontainerUrl] = useState<string | null>(null);
+
+  // Panel visibility & sizing
   const [showFiles, setShowFiles] = useState(true);
   const [showAiPanel, setShowAiPanel] = useState(true);
+  const [showTerminal, setShowTerminal] = useState(true);
+
+  // Exact controlled layout dimensions (Default 260px, 360px, 220px)
+  const [explorerWidth, setExplorerWidth] = useState(260);
+  const [assistantWidth, setAssistantWidth] = useState(360);
+  const [terminalHeight, setTerminalHeight] = useState(220);
+  const [isDragging, setIsDragging] = useState(false);
 
   // Command palette
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
@@ -86,6 +108,10 @@ export default function EditorPage() {
   const [dependencies, setDependencies] = useState<
     Array<{ name: string; version: string }>
   >([]);
+
+  // Dedicated Workspaces: 'developer' | 'product'
+  const [workspace, setWorkspace] = useState<'developer' | 'product'>('developer');
+  const [productPlan, setProductPlan] = useState<ProductPlan | null>(null);
 
   // Active file derived from single source of truth: `files`
   const activeFile = useMemo(
@@ -115,25 +141,20 @@ export default function EditorPage() {
   const isCurrentFileDirty = Boolean(activePath && dirtyPaths.has(activePath));
 
   // Open / switch active file
-  const openFile = useCallback(
-    (file: ProjectFile) => {
-      if (file.is_folder) return;
-      // Add to open tabs if not present
-      setOpenTabs((prev) => (prev.includes(file.path) ? prev : [...prev, file.path]));
-      setActivePath(file.path);
+  const openFile = useCallback((file: ProjectFile) => {
+    if (file.is_folder) return;
+    setOpenTabs((prev) => (prev.includes(file.path) ? prev : [...prev, file.path]));
+    setActivePath(file.path);
 
-      // Initialize drafts / savedContents if not yet set
-      setDrafts((prev) => {
-        if (file.path in prev) return prev;
-        return { ...prev, [file.path]: file.content };
-      });
-      setSavedContents((prev) => {
-        if (file.path in prev) return prev;
-        return { ...prev, [file.path]: file.content };
-      });
-    },
-    []
-  );
+    setDrafts((prev) => {
+      if (file.path in prev) return prev;
+      return { ...prev, [file.path]: file.content };
+    });
+    setSavedContents((prev) => {
+      if (file.path in prev) return prev;
+      return { ...prev, [file.path]: file.content };
+    });
+  }, []);
 
   // Close tab
   const closeTab = useCallback(
@@ -154,7 +175,6 @@ export default function EditorPage() {
         return next;
       });
 
-      // Clear draft for closed file
       setDrafts((prev) => {
         const copy = { ...prev };
         delete copy[path];
@@ -164,31 +184,33 @@ export default function EditorPage() {
     [activePath, dirtyPaths]
   );
 
-  // Dedicated Workspaces: 'developer' | 'product'
-  const [workspace, setWorkspace] = useState<'developer' | 'product'>('developer');
-  const [productPlan, setProductPlan] = useState<ProductPlan | null>(null);
-
-  const persistFiles = useCallback((projId: string, nextFiles: ProjectFile[]) => {
+  const persistFilesToCache = useCallback((projId: string, nextFiles: ProjectFile[]) => {
     try {
-      localStorage.setItem(`ai_studio_files_${projId}`, JSON.stringify(nextFiles));
+      localStorage.setItem(`codatron_files_${projId}`, JSON.stringify(nextFiles));
     } catch (e) {
-      console.warn('localStorage persist failed', e);
+      console.warn('localStorage cache failed', e);
     }
   }, []);
 
-  const handlePlanGenerated = useCallback((plan: ProductPlan) => {
-    setProductPlan(plan);
-    const pid = project?.id || 'local-project';
-    try {
-      localStorage.setItem(`ai_studio_plan_${pid}`, JSON.stringify(plan));
-    } catch {}
-  }, [project?.id]);
+  const handlePlanGenerated = useCallback(
+    (plan: ProductPlan) => {
+      setProductPlan(plan);
+      if (project) {
+        void saveProductPlanToDb(supabase, project.id, plan);
+        try {
+          localStorage.setItem(`codatron_plan_${project.id}`, JSON.stringify(plan));
+        } catch { }
+      }
+    },
+    [project, supabase]
+  );
 
   const handleFilesUpdatedFromPM = useCallback(
     (newFiles: ProjectFile[], newDeps?: Array<{ name: string; version: string }>) => {
       setFiles(newFiles);
+      setProjectStatus(newFiles.length > 0 ? 'ready' : 'empty');
       const pid = project?.id || 'local-project';
-      persistFiles(pid, newFiles);
+      persistFilesToCache(pid, newFiles);
       if (newDeps) setDependencies(newDeps);
       const newSaved: Record<string, string> = {};
       for (const f of newFiles) {
@@ -197,18 +219,119 @@ export default function EditorPage() {
       setSavedContents(newSaved);
       setDrafts(newSaved);
     },
-    [project?.id, persistFiles]
+    [project?.id, persistFilesToCache]
   );
 
-  const handleSwitchToDeveloper = useCallback((targetFilePath?: string) => {
-    setWorkspace('developer');
-    if (targetFilePath) {
-      setOpenTabs((prev) => (prev.includes(targetFilePath) ? prev : [...prev, targetFilePath]));
-      setActivePath(targetFilePath);
-    }
-  }, []);
+  const handleSwitchToDeveloper = useCallback(
+    (targetFilePath?: string) => {
+      setWorkspace('developer');
+      if (targetFilePath) {
+        const target = files.find((f) => f.path === targetFilePath);
+        if (target) {
+          openFile(target);
+        } else {
+          setOpenTabs((prev) => (prev.includes(targetFilePath) ? prev : [...prev, targetFilePath]));
+          setActivePath(targetFilePath);
+        }
+      }
+    },
+    [files, openFile]
+  );
 
-  // Load project on mount
+  // Resize drag handlers
+  const handleExplorerMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+    const startX = e.clientX;
+    const startWidth = explorerWidth;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const delta = moveEvent.clientX - startX;
+      const newWidth = Math.min(400, Math.max(220, startWidth + delta));
+      setExplorerWidth(newWidth);
+      window.dispatchEvent(new Event('resize'));
+      window.dispatchEvent(new Event('monaco-layout'));
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      window.dispatchEvent(new Event('resize'));
+      window.dispatchEvent(new Event('monaco-layout'));
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  }, [explorerWidth]);
+
+  const handleAssistantMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+    const startX = e.clientX;
+    const startWidth = assistantWidth;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const delta = startX - moveEvent.clientX;
+      const newWidth = Math.min(480, Math.max(320, startWidth + delta));
+      setAssistantWidth(newWidth);
+      window.dispatchEvent(new Event('resize'));
+      window.dispatchEvent(new Event('monaco-layout'));
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      window.dispatchEvent(new Event('resize'));
+      window.dispatchEvent(new Event('monaco-layout'));
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  }, [assistantWidth]);
+
+  const handleTerminalMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+    const startY = e.clientY;
+    const startHeight = terminalHeight;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const delta = startY - moveEvent.clientY;
+      const maxHeight = Math.floor(window.innerHeight * 0.5);
+      const newHeight = Math.min(maxHeight, Math.max(140, startHeight + delta));
+      setTerminalHeight(newHeight);
+      window.dispatchEvent(new Event('resize'));
+      window.dispatchEvent(new Event('monaco-layout'));
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      window.dispatchEvent(new Event('resize'));
+      window.dispatchEvent(new Event('monaco-layout'));
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  }, [terminalHeight]);
+
+  const gridTemplateColumns = useMemo(() => {
+    if (showFiles && showAiPanel) {
+      return `${explorerWidth}px 4px minmax(0, 1fr) 4px ${assistantWidth}px`;
+    }
+    if (showFiles && !showAiPanel) {
+      return `${explorerWidth}px 4px minmax(0, 1fr)`;
+    }
+    if (!showFiles && showAiPanel) {
+      return `minmax(0, 1fr) 4px ${assistantWidth}px`;
+    }
+    return 'minmax(0, 1fr)';
+  }, [showFiles, showAiPanel, explorerWidth, assistantWidth]);
+
+  // Load project on mount: Hydrate from Supabase and URL query
   useEffect(() => {
     if (!isLoading && !user && process.env.NODE_ENV === 'production') {
       router.replace('/login?next=/editor');
@@ -216,136 +339,194 @@ export default function EditorPage() {
     }
 
     let active = true;
+
     async function loadInitialProject() {
+      setProjectStatus('loading');
+
+      // Check URL query parameters: ?project=<id> or ?id=<id>
+      const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+      const queryPid = params?.get('project') || params?.get('id');
+
       if (!user) {
-        // Local development fallback workspace with persistent cache
-        const cacheKey = 'ai_studio_files_local-project';
+        // Local offline development mode
+        const localPid = 'local-project';
         let initialFiles: ProjectFile[] = [];
         try {
-          const cached = localStorage.getItem(cacheKey);
+          const cached = localStorage.getItem(`codatron_files_${localPid}`);
           if (cached) {
             const parsed = JSON.parse(cached);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              initialFiles = parsed;
-            }
+            if (Array.isArray(parsed)) initialFiles = parsed;
           }
-        } catch (e) {
-          console.warn('Could not read cached files', e);
-        }
+        } catch { }
 
-        if (initialFiles.length === 0) {
-          initialFiles = getDefaultProjectFiles('AI Studio Project').map((f, idx) => ({
-            id: `starter-${idx}`,
-            project_id: 'local-project',
-            name: f.name,
-            path: f.path,
-            content: f.content,
-            language: f.language,
-            is_folder: f.isFolder,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          }));
-          try {
-            localStorage.setItem(cacheKey, JSON.stringify(initialFiles));
-          } catch {}
-        }
-
-        // Restore saved product plan if any
         try {
-          const savedPlan = localStorage.getItem('ai_studio_plan_local-project');
+          const savedPlan = localStorage.getItem(`codatron_plan_${localPid}`);
           if (savedPlan) setProductPlan(JSON.parse(savedPlan));
-        } catch {}
+        } catch { }
 
         setProject({
-          id: 'local-project',
+          id: localPid,
           user_id: 'local-user',
-          name: 'AI Studio Project',
-          description: 'Interactive AI Studio IDE Workspace',
+          name: 'Local Project',
+          description: 'Local development workspace',
           prompt: null,
           framework: 'nextjs',
           is_public: false,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         });
+
         setFiles(initialFiles);
+        setProjectStatus(initialFiles.length > 0 ? 'ready' : 'empty');
 
-        const initial =
-          initialFiles.find((file) => file.path === 'app/page.tsx') ??
-          initialFiles.find((file) => !file.is_folder);
-
-        if (initial) {
-          setOpenTabs([initial.path]);
-          setActivePath(initial.path);
-          setDrafts({ [initial.path]: initial.content });
-          setSavedContents({ [initial.path]: initial.content });
+        if (initialFiles.length > 0) {
+          const initial =
+            initialFiles.find((file) => file.path === 'app/page.tsx' || file.path === 'main.py') ??
+            initialFiles.find((file) => !file.is_folder);
+          if (initial) {
+            setOpenTabs([initial.path]);
+            setActivePath(initial.path);
+            setDrafts({ [initial.path]: initial.content });
+            setSavedContents({ [initial.path]: initial.content });
+          }
         }
         return;
       }
 
-      const projects = await getProjects(supabase, user?.id);
-      if (!active) return;
-      let current = projects.data?.[0] ?? null;
-      if (!current) {
-        const created = await createProject(supabase, user!.id, {
-          name: 'My AI Project',
-          description: 'AI-built application',
-        });
-        if (!active) return;
-        current = created.data;
-      }
-      if (!current) {
-        toast.error('Unable to load or create a project.');
-        return;
-      }
-      const loaded = await getProjectFiles(supabase, current.id);
-      if (!active) return;
-      let next = loaded.data ?? [];
-
-      // If database has 0 files for project, seed clean starter files
-      if (next.length === 0) {
-        const starter = getDefaultProjectFiles(current.name, current.prompt ?? undefined);
-        await batchUpsertFiles(supabase, current.id, starter);
-        const reloaded = await getProjectFiles(supabase, current.id);
-        next = reloaded.data ?? [];
-      }
-
-      // Sync to localStorage
+      // Authenticated User: Supabase is the sole source of truth
       try {
-        localStorage.setItem(`ai_studio_files_${current.id}`, JSON.stringify(next));
-        const savedPlan = localStorage.getItem(`ai_studio_plan_${current.id}`);
-        if (savedPlan) setProductPlan(JSON.parse(savedPlan));
-      } catch {}
+        let current: Project | null = null;
 
-      setProject(current);
-      setFiles(next);
+        if (queryPid) {
+          const fetched = await getProjectById(supabase, queryPid);
+          if (active && fetched.data) {
+            current = fetched.data;
+          }
+        }
 
-      // Select initial file (app/page.tsx or first non-folder file)
-      const initial =
-        next.find((file) => file.path === 'app/page.tsx') ??
-        next.find((file) => !file.is_folder);
+        if (!current) {
+          const projects = await getProjects(supabase, user.id);
+          if (!active) return;
+          current = projects.data?.[0] ?? null;
+        }
 
-      if (initial) {
-        setOpenTabs([initial.path]);
-        setActivePath(initial.path);
-        setDrafts({ [initial.path]: initial.content });
-        setSavedContents({ [initial.path]: initial.content });
+        if (!current) {
+          const created = await createProject(supabase, user.id, {
+            name: 'New Project',
+            description: 'AI-built application',
+          });
+          if (!active) return;
+          current = created.data;
+        }
+
+        if (!current) {
+          setProjectStatus('error');
+          toast.error('Unable to load or create a project.');
+          return;
+        }
+
+        // Ensure URL reflects active projectId
+        if (typeof window !== 'undefined' && window.location.search !== `?project=${current.id}`) {
+          window.history.replaceState(null, '', `?project=${current.id}`);
+        }
+
+        setProject(current);
+
+        // Fetch files from Supabase project_files table
+        const loaded = await getProjectFiles(supabase, current.id);
+        if (!active) return;
+        const projectFiles = loaded.data ?? [];
+
+        setFiles(projectFiles);
+        persistFilesToCache(current.id, projectFiles);
+
+        if (projectFiles.length === 0) {
+          // Explicit EMPTY PROJECT state. Do NOT inject fake or demo files!
+          setProjectStatus('empty');
+          setOpenTabs([]);
+          setActivePath('');
+        } else {
+          setProjectStatus('ready');
+          const initial =
+            projectFiles.find((file) => file.path === 'app/page.tsx' || file.path === 'main.py' || file.path === 'index.html') ??
+            projectFiles.find((file) => !file.is_folder);
+
+          if (initial) {
+            setOpenTabs([initial.path]);
+            setActivePath(initial.path);
+            setDrafts({ [initial.path]: initial.content });
+            setSavedContents({ [initial.path]: initial.content });
+          }
+        }
+
+        // Load project plan from Supabase
+        const planRes = await getProductPlanFromDb(supabase, current.id);
+        if (active && planRes.plan) {
+          setProductPlan(planRes.plan);
+        }
+
+        // Load dependencies
+        const deps = await supabase
+          .from('project_dependencies')
+          .select('name,version')
+          .eq('project_id', current.id);
+        if (active && !deps.error) {
+          setDependencies(deps.data ?? []);
+        }
+      } catch (err) {
+        if (!active) return;
+        setProjectStatus('error');
+        console.error('Project hydration error:', err);
+        toast.error('Failed to load project from Supabase.');
       }
-
-      const deps = await supabase
-        .from('project_dependencies')
-        .select('name,version')
-        .eq('project_id', current.id);
-      if (!active) return;
-      if (!deps.error) setDependencies(deps.data ?? []);
     }
 
     void loadInitialProject();
     return () => {
       active = false;
     };
-  }, [isLoading, router, supabase, user]);
+  }, [isLoading, router, supabase, user, persistFilesToCache]);
 
-  // Save active file
+  // Synchronize WebContainer runtime snapshot (previewUrl, errors)
+  useEffect(() => {
+    const unsub = webcontainerManager.subscribeSnapshot((snap) => {
+      if (snap.previewUrl) {
+        setWebcontainerUrl(snap.previewUrl);
+      }
+      if (snap.lastError) {
+        setPreviewError(snap.lastError.message);
+      }
+    });
+    return unsub;
+  }, []);
+
+  // Rename Project
+  const handleRenameProject = async (newName: string) => {
+    if (!project) return;
+    if (project.id === 'local-project') {
+      setProject((prev) => (prev ? { ...prev, name: newName } : prev));
+      toast.success('Project renamed');
+      return;
+    }
+    const res = await updateProject(supabase, project.id, { name: newName });
+    if (res.data) {
+      setProject(res.data);
+      toast.success('Project renamed');
+    } else {
+      toast.error('Could not rename project');
+    }
+  };
+
+  // Run / Preview shortcut
+  const handleRunPreview = () => {
+    if (viewMode === 'code') {
+      setViewMode('split');
+    } else {
+      setViewMode('preview');
+    }
+  };
+
+  // Save active file to Supabase & hot-sync to WebContainer virtual filesystem
   const save = useCallback(async (): Promise<boolean> => {
     if (!project || !activeFile) return false;
     const contentToSave = currentDraft;
@@ -355,8 +536,9 @@ export default function EditorPage() {
         file.path === activeFile.path ? { ...file, content: contentToSave } : file
       );
       setFiles(updated);
-      persistFiles('local-project', updated);
+      persistFilesToCache('local-project', updated);
       setSavedContents((prev) => ({ ...prev, [activeFile.path]: contentToSave }));
+      void webcontainerManager.syncFile(activeFile.path, contentToSave);
       toast.success(`Saved ${activeFile.path}`);
       return true;
     }
@@ -374,16 +556,16 @@ export default function EditorPage() {
       return false;
     }
 
-    // Update frontend state single source of truth and persistent cache
     const updated = files.map((file) =>
       file.path === activeFile.path ? { ...file, content: contentToSave } : file
     );
     setFiles(updated);
-    persistFiles(project.id, updated);
+    persistFilesToCache(project.id, updated);
     setSavedContents((prev) => ({ ...prev, [activeFile.path]: contentToSave }));
+    void webcontainerManager.syncFile(activeFile.path, contentToSave);
     toast.success(`Saved ${activeFile.path}`);
     return true;
-  }, [activeFile, currentDraft, files, persistFiles, project, supabase]);
+  }, [activeFile, currentDraft, files, persistFilesToCache, project, supabase]);
 
   // Global Keyboard Shortcuts (Ctrl+S, Ctrl+K)
   useEffect(() => {
@@ -403,14 +585,14 @@ export default function EditorPage() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isCurrentFileDirty, save]);
 
-  // AI Generation Pipeline
+  // AI Generation Pipeline (Build / Code / Debug)
   const generate = async (overridePrompt?: string) => {
     const effectivePrompt = overridePrompt || prompt;
     if (!project || !effectivePrompt.trim()) return;
 
     if (isCurrentFileDirty) {
       const confirmSave = window.confirm(
-        'You have unsaved Monaco edits. Save them before AI changes are applied?'
+        'You have unsaved edits. Save them before AI changes are applied?'
       );
       if (!confirmSave) return;
       const saveSuccess = await save();
@@ -424,6 +606,7 @@ export default function EditorPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           prompt: effectivePrompt,
+          mode: aiMode,
           activePath,
           selectedCode: selectedCode || undefined,
           previewError: previewError || undefined,
@@ -438,8 +621,14 @@ export default function EditorPage() {
 
       const nextFiles = body.files ?? [];
       setFiles(nextFiles);
-      persistFiles(project.id, nextFiles);
+      setProjectStatus(nextFiles.length > 0 ? 'ready' : 'empty');
+      persistFilesToCache(project.id, nextFiles);
       setDependencies(body.dependencies ?? []);
+
+      // If a project name was derived from first build, update project state
+      if (body.projectName && body.projectName !== project.name) {
+        setProject((prev) => (prev ? { ...prev, name: body.projectName! } : prev));
+      }
 
       // Reset drafts & saved contents to newly returned source files
       const newSaved: Record<string, string> = {};
@@ -455,6 +644,11 @@ export default function EditorPage() {
 
       setPrompt('');
       if (viewMode === 'code') setViewMode('split');
+
+      // Automate Build App pipeline in WebContainer
+      if (aiMode === 'build' || nextFiles.length > 0) {
+        void webcontainerManager.runProject(nextFiles);
+      }
 
       // Auto-open created or modified file
       const createdOp = body.operations.find((op) => op.type === 'create');
@@ -472,166 +666,137 @@ export default function EditorPage() {
     }
   };
 
-  // Fix with AI
+  // Fix with AI Debug
   const fixWithAI = async (errorText: string) => {
-    if (!project) return;
-    if (isCurrentFileDirty) {
-      const saveSuccess = await save();
-      if (!saveSuccess) return;
-    }
-
-    setIsWorking(true);
-    try {
-      const response = await fetch(`/api/projects/${project.id}/generate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: `Diagnose and fix this preview error: ${errorText}`,
-          activePath,
-          selectedCode: selectedCode || undefined,
-          previewError: errorText,
-          files,
-        }),
-      });
-
-      const body = (await response.json()) as AgentResponse & {
-        message?: string;
-      };
-      if (!response.ok) throw new Error(body.message || 'Fix with AI failed.');
-
-      const nextFiles = body.files ?? [];
-      setFiles(nextFiles);
-      persistFiles(project.id, nextFiles);
-      setDependencies(body.dependencies ?? []);
-
-      const newSaved: Record<string, string> = {};
-      for (const f of nextFiles) {
-        if (!f.is_folder) newSaved[f.path] = f.content;
-      }
-      setSavedContents(newSaved);
-      setDrafts(newSaved);
-
-      toast.success(`AI Repair applied: ${body.summary}`);
-      setPreviewError('');
-      if (viewMode === 'code') setViewMode('split');
-    } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : 'Fix with AI failed.');
-    } finally {
-      setIsWorking(false);
-    }
+    setAiMode('debug');
+    setShowAiPanel(true);
+    setPreviewError(errorText);
+    await generate(`Diagnose and fix this error: ${errorText}`);
   };
 
-  // Real File Management Actions
+  // File operations handlers
   const handleCreateFile = async (filePath: string) => {
     if (!project) return;
-    const name = filePath.split('/').pop() || filePath;
-    const language = filePath.endsWith('.tsx') || filePath.endsWith('.ts') ? 'typescript' : 'javascript';
+    const cleanPath = filePath.trim().replace(/^\//, '');
+    if (!cleanPath) return;
+
+    const name = cleanPath.split('/').pop() || cleanPath;
+    const newFile: ProjectFile = {
+      id: `f-${Date.now()}`,
+      project_id: project.id,
+      name,
+      path: cleanPath,
+      content: '',
+      language: cleanPath.endsWith('.py')
+        ? 'python'
+        : cleanPath.endsWith('.java')
+          ? 'java'
+          : cleanPath.endsWith('.cpp')
+            ? 'cpp'
+            : cleanPath.endsWith('.json')
+              ? 'json'
+              : cleanPath.endsWith('.css')
+                ? 'css'
+                : 'typescript',
+      is_folder: false,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
 
     if (project.id === 'local-project') {
-      const newFile: ProjectFile = {
-        id: `file-${Date.now()}`,
-        project_id: 'local-project',
-        name,
-        path: filePath,
-        content: '// New file\n',
-        language,
-        is_folder: false,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-      const updated = [...files.filter((f) => f.path !== filePath), newFile];
+      const updated = [...files.filter((f) => f.path !== cleanPath), newFile];
       setFiles(updated);
-      persistFiles('local-project', updated);
+      setProjectStatus('ready');
+      persistFilesToCache('local-project', updated);
       openFile(newFile);
-      toast.success(`Created ${filePath}`);
+      void webcontainerManager.syncFile(cleanPath, '');
+      toast.success(`Created ${cleanPath}`);
       return;
     }
 
     const res = await saveProjectFile(supabase, project.id, {
-      path: filePath,
+      path: cleanPath,
       name,
-      content: '// New file\n',
-      language,
+      content: '',
+      language: newFile.language,
       isFolder: false,
     });
+
     if (res.error) {
       toast.error(`Create file failed: ${res.error.message}`);
       return;
     }
-    if (res.data) {
-      const updated = [...files.filter((f) => f.path !== filePath), res.data!];
-      setFiles(updated);
-      persistFiles(project.id, updated);
-      openFile(res.data);
-      toast.success(`Created ${filePath}`);
+
+    const refreshed = await getProjectFiles(supabase, project.id);
+    if (refreshed.data) {
+      setFiles(refreshed.data);
+      setProjectStatus('ready');
+      persistFilesToCache(project.id, refreshed.data);
+      const created = refreshed.data.find((f) => f.path === cleanPath);
+      if (created) openFile(created);
+      void webcontainerManager.syncFile(cleanPath, '');
+      toast.success(`Created ${cleanPath}`);
     }
   };
 
   const handleCreateFolder = async (folderPath: string) => {
     if (!project) return;
-    const name = folderPath.split('/').pop() || folderPath;
+    const cleanPath = folderPath.trim().replace(/^\//, '');
+    if (!cleanPath) return;
+    const name = cleanPath.split('/').pop() || cleanPath;
+
+    const folderPlaceholder: ProjectFile = {
+      id: `folder-${Date.now()}`,
+      project_id: project.id,
+      name,
+      path: cleanPath,
+      content: '',
+      language: 'plaintext',
+      is_folder: true,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
 
     if (project.id === 'local-project') {
-      const newFolder: ProjectFile = {
-        id: `folder-${Date.now()}`,
-        project_id: 'local-project',
-        name,
-        path: folderPath,
-        content: '',
-        language: 'folder',
-        is_folder: true,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-      const updated = [...files.filter((f) => f.path !== folderPath), newFolder];
+      const updated = [...files, folderPlaceholder];
       setFiles(updated);
-      persistFiles('local-project', updated);
-      toast.success(`Created folder ${folderPath}`);
+      setProjectStatus('ready');
+      persistFilesToCache('local-project', updated);
+      toast.success(`Created folder ${cleanPath}`);
       return;
     }
 
     const res = await saveProjectFile(supabase, project.id, {
-      path: folderPath,
+      path: cleanPath,
       name,
       content: '',
-      language: 'folder',
+      language: 'plaintext',
       isFolder: true,
     });
+
     if (res.error) {
       toast.error(`Create folder failed: ${res.error.message}`);
       return;
     }
-    if (res.data) {
-      const updated = [...files.filter((f) => f.path !== folderPath), res.data!];
-      setFiles(updated);
-      persistFiles(project.id, updated);
-      toast.success(`Created folder ${folderPath}`);
+
+    const refreshed = await getProjectFiles(supabase, project.id);
+    if (refreshed.data) {
+      setFiles(refreshed.data);
+      setProjectStatus('ready');
+      persistFilesToCache(project.id, refreshed.data);
+      toast.success(`Created folder ${cleanPath}`);
     }
   };
 
   const handleRenameFile = async (file: ProjectFile, newPath: string) => {
     if (!project) return;
-    const name = newPath.split('/').pop() || newPath;
-
     if (project.id === 'local-project') {
-      let updated: ProjectFile[];
-      if (file.is_folder) {
-        updated = files.map((f) => {
-          if (f.path === file.path) return { ...f, path: newPath, name };
-          if (f.path.startsWith(`${file.path}/`)) {
-            const sub = f.path.slice(file.path.length + 1);
-            const childNewPath = `${newPath}/${sub}`;
-            return { ...f, path: childNewPath, name: childNewPath.split('/').pop() || childNewPath };
-          }
-          return f;
-        });
-      } else {
-        updated = files.map((f) => (f.path === file.path ? { ...f, path: newPath, name } : f));
-      }
+      const updated = files.map((f) => (f.path === file.path ? { ...f, path: newPath } : f));
       setFiles(updated);
-      persistFiles('local-project', updated);
+      persistFilesToCache('local-project', updated);
       setOpenTabs((prev) => prev.map((p) => (p === file.path ? newPath : p)));
       if (activePath === file.path) setActivePath(newPath);
+      void webcontainerManager.renameFile(file.path, newPath);
       toast.success(`Renamed to ${newPath}`);
       return;
     }
@@ -641,33 +806,29 @@ export default function EditorPage() {
       toast.error(`Rename failed: ${res.error.message}`);
       return;
     }
+
     const refreshed = await getProjectFiles(supabase, project.id);
     if (refreshed.data) {
       setFiles(refreshed.data);
-      persistFiles(project.id, refreshed.data);
-      setOpenTabs((prev) =>
-        prev.map((p) => (p === file.path ? newPath : p))
-      );
-      if (activePath === file.path) {
-        setActivePath(newPath);
-      }
+      persistFilesToCache(project.id, refreshed.data);
+      setOpenTabs((prev) => prev.map((p) => (p === file.path ? newPath : p)));
+      if (activePath === file.path) setActivePath(newPath);
+      void webcontainerManager.renameFile(file.path, newPath);
       toast.success(`Renamed to ${newPath}`);
     }
   };
 
   const handleDeleteFile = async (file: ProjectFile) => {
     if (!project) return;
-
     if (project.id === 'local-project') {
-      let updated: ProjectFile[];
-      if (file.is_folder) {
-        updated = files.filter((f) => f.path !== file.path && !f.path.startsWith(`${file.path}/`));
-      } else {
-        updated = files.filter((f) => f.path !== file.path);
-      }
+      const updated = files.filter(
+        (f) => f.path !== file.path && !f.path.startsWith(`${file.path}/`)
+      );
       setFiles(updated);
-      persistFiles('local-project', updated);
+      setProjectStatus(updated.length > 0 ? 'ready' : 'empty');
+      persistFilesToCache('local-project', updated);
       closeTab(file.path);
+      void webcontainerManager.removeFile(file.path);
       toast.success(`Deleted ${file.path}`);
       return;
     }
@@ -677,11 +838,14 @@ export default function EditorPage() {
       toast.error(`Delete failed: ${res.error.message}`);
       return;
     }
+
     const refreshed = await getProjectFiles(supabase, project.id);
     if (refreshed.data) {
       setFiles(refreshed.data);
-      persistFiles(project.id, refreshed.data);
+      setProjectStatus(refreshed.data.length > 0 ? 'ready' : 'empty');
+      persistFilesToCache(project.id, refreshed.data);
       closeTab(file.path);
+      void webcontainerManager.removeFile(file.path);
       toast.success(`Deleted ${file.path}`);
     }
   };
@@ -697,12 +861,12 @@ export default function EditorPage() {
     }
   };
 
-  if (isLoading || !project) {
+  if (projectStatus === 'loading' || !project) {
     return (
       <div className="grid min-h-screen place-items-center bg-[#080911]">
         <div className="flex flex-col items-center gap-3">
           <Loader2 className="h-7 w-7 animate-spin text-indigo-500" />
-          <p className="text-xs text-slate-400 font-medium">Initializing AI Studio workspace…</p>
+          <p className="text-xs text-slate-400 font-medium">Hydrating project from Supabase…</p>
         </div>
       </div>
     );
@@ -710,6 +874,7 @@ export default function EditorPage() {
 
   return (
     <main className="flex h-screen flex-col bg-[#080911] text-slate-100 overflow-hidden select-none">
+      <Script src="/coi-serviceworker.js" strategy="afterInteractive" />
       {/* Workspace Header */}
       <WorkspaceHeader
         project={project}
@@ -725,10 +890,12 @@ export default function EditorPage() {
         onToggleAiPanel={() => setShowAiPanel((prev) => !prev)}
         workspace={workspace}
         onWorkspaceChange={setWorkspace}
+        onRenameProject={handleRenameProject}
+        onRunPreview={handleRunPreview}
       />
 
-      {/* Main Workspace: Dedicated Product Manager Workspace OR 3-Panel IDE Layout */}
-      {workspace === 'product' && project ? (
+      {/* Main Workspace: Dedicated Product Manager Workspace OR Developer IDE */}
+      {workspace === 'product' ? (
         <ProductWorkspace
           project={project}
           files={files}
@@ -738,61 +905,189 @@ export default function EditorPage() {
           onSwitchToDeveloper={handleSwitchToDeveloper}
         />
       ) : (
-        <div className="flex-1 min-h-0 relative">
-          <ResizablePanelGroup
-            key={`layout-${showFiles ? 'f1' : 'f0'}-${showAiPanel ? 'a1' : 'a0'}`}
-            direction="horizontal"
-            className="h-full w-full"
+        <div className={`flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden relative ${isDragging ? 'select-none [&_iframe]:pointer-events-none' : ''}`}>
+          {/* Upper Workspace: Explorer | Center | Assistant */}
+          <div
+            className="flex-1 min-h-0 min-w-0 grid overflow-hidden w-full"
+            style={{
+              gridTemplateColumns,
+            }}
           >
-            {/* Panel 1: File Explorer (18–22%) */}
+            {/* Panel 1: File Explorer (min 220px, max 400px, default 260px) */}
             {showFiles && (
-              <>
-                <ResizablePanel
-                  defaultSize="20%"
-                  minSize="15%"
-                  maxSize="30%"
-                  className="min-w-[190px]"
-                >
-                  <FileExplorer
-                    files={files}
-                    activePath={activePath}
-                    dirtyPaths={dirtyPaths}
-                    onOpenFile={openFile}
-                    onCreateFile={handleCreateFile}
-                    onCreateFolder={handleCreateFolder}
-                    onRenameFile={handleRenameFile}
-                    onDeleteFile={handleDeleteFile}
-                  />
-                </ResizablePanel>
-                <ResizableHandle withHandle />
-              </>
-            )}
-
-            {/* Panel 2: Center Workspace (Code / Preview / Split) (50–58%) */}
-            <ResizablePanel defaultSize={showFiles && showAiPanel ? "54%" : showFiles || showAiPanel ? "75%" : "100%"}>
-              <div className="flex h-full flex-col min-w-0 bg-[#090a12]">
-                {/* Editor Tab Bar */}
-                <EditorTabBar
+              <div
+                className="h-full min-h-0 min-w-0 overflow-hidden flex flex-col bg-[#0b0c16] border-r border-white/10"
+                style={{ width: `${explorerWidth}px`, minWidth: '220px', maxWidth: '400px' }}
+              >
+                <FileExplorer
                   files={files}
-                  openTabs={openTabs}
                   activePath={activePath}
                   dirtyPaths={dirtyPaths}
-                  onSelectTab={(path) => {
-                    const f = files.find((item) => item.path === path);
-                    if (f) openFile(f);
-                  }}
-                  onCloseTab={closeTab}
-                  viewMode={viewMode}
-                  setViewMode={setViewMode}
-                  viewport={viewport}
-                  setViewport={setViewport}
+                  onOpenFile={openFile}
+                  onCreateFile={handleCreateFile}
+                  onCreateFolder={handleCreateFolder}
+                  onRenameFile={handleRenameFile}
+                  onDeleteFile={handleDeleteFile}
                 />
+              </div>
+            )}
 
-                {/* Center Workspace Content */}
-                <div className="flex-1 min-h-0 relative overflow-hidden">
-                  {/* 1. CODE ONLY VIEW */}
-                  {viewMode === 'code' && (
-                    <div className="h-full w-full p-2.5">
+            {/* Drag Handle: Explorer to Center */}
+            {showFiles && (
+              <div
+                onMouseDown={handleExplorerMouseDown}
+                className="w-1 h-full cursor-col-resize bg-white/5 hover:bg-indigo-500/50 active:bg-indigo-500 transition-colors select-none z-10 flex items-center justify-center group"
+                title="Drag to resize File Explorer"
+              >
+                <div className="w-0.5 h-6 rounded bg-slate-600 group-hover:bg-indigo-300" />
+              </div>
+            )}
+
+            {/* Panel 2: Center Workspace (min-width: 0, min-height: 0, flex-1) */}
+            <div className="h-full min-h-0 min-w-0 flex flex-col bg-[#090a12] overflow-hidden">
+              {/* Editor Tab Bar */}
+              <EditorTabBar
+                files={files}
+                openTabs={openTabs}
+                activePath={activePath}
+                dirtyPaths={dirtyPaths}
+                onSelectTab={(path) => {
+                  const f = files.find((item) => item.path === path);
+                  if (f) openFile(f);
+                }}
+                onCloseTab={closeTab}
+                viewMode={viewMode}
+                setViewMode={setViewMode}
+                viewport={viewport}
+                setViewport={setViewport}
+                showTerminal={showTerminal}
+                onToggleTerminal={() => {
+                  setShowTerminal((prev) => !prev);
+                  setTimeout(() => {
+                    window.dispatchEvent(new Event('resize'));
+                    window.dispatchEvent(new Event('monaco-layout'));
+                  }, 50);
+                }}
+              />
+
+              {/* Center Content: Empty Canvas OR Code / Preview / Split */}
+              <div className="flex-1 min-h-0 min-w-0 relative overflow-hidden">
+                {/* EMPTY PROJECT OVERVIEW (No fake files!) */}
+                {projectStatus === 'empty' && viewMode === 'code' && (
+                  <div className="flex h-full flex-col items-center justify-center p-8 text-center bg-[#090a14] select-none">
+                    <div className="max-w-md mx-auto space-y-5">
+                      <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 mx-auto shadow-2xl">
+                        <Code2 className="h-7 w-7" />
+                      </div>
+                      <div>
+                        <h3 className="text-base font-bold text-white">
+                          Empty Project: {project.name}
+                        </h3>
+                        <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                          No files created yet. Choose how you want to build this application:
+                        </p>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-left">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAiMode('build');
+                            setShowAiPanel(true);
+                          }}
+                          className="rounded-xl border border-indigo-500/30 bg-indigo-950/20 hover:bg-indigo-950/40 p-3.5 transition group"
+                        >
+                          <div className="flex items-center gap-2 text-indigo-300 font-semibold text-xs mb-1">
+                            <Sparkles className="h-3.5 w-3.5 text-indigo-400" />
+                            <span>AI Build Mode</span>
+                          </div>
+                          <p className="text-[11px] text-slate-400 leading-relaxed">
+                            Describe your entire app (Next.js, Python, React, etc.) in the AI Assistant on the right.
+                          </p>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setWorkspace('product')}
+                          className="rounded-xl border border-white/10 bg-white/[0.02] hover:bg-white/[0.06] p-3.5 transition group"
+                        >
+                          <div className="flex items-center gap-2 text-slate-200 font-semibold text-xs mb-1">
+                            <Compass className="h-3.5 w-3.5 text-purple-400" />
+                            <span>Product Manager</span>
+                          </div>
+                          <p className="text-[11px] text-slate-400 leading-relaxed">
+                            Define Vision, Personas, MVP, Features, and Roadmap before building.
+                          </p>
+                        </button>
+                      </div>
+
+                      <div className="pt-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => void handleCreateFile('app/page.tsx')}
+                          className="text-xs text-slate-400 hover:text-white gap-1.5"
+                        >
+                          <FilePlus className="h-3.5 w-3.5" />
+                          <span>Or create file manually</span>
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 1. CODE ONLY VIEW */}
+                {projectStatus === 'ready' && viewMode === 'code' && (
+                  <div className="h-full w-full p-2.5 min-w-0 min-h-0 overflow-hidden">
+                    {activeFile ? (
+                      <CodeEditor
+                        path={activeFile.path}
+                        value={currentDraft}
+                        language={activeFile.language}
+                        onChange={(val) => {
+                          setDrafts((prev) => ({ ...prev, [activeFile.path]: val }));
+                        }}
+                        onSelectionChange={setSelectedCode}
+                        onCursorChange={(line, col) => setCursorPos({ line, col })}
+                        onSave={save}
+                      />
+                    ) : (
+                      <div className="flex h-full flex-col items-center justify-center p-8 text-center text-slate-500">
+                        <FileQuestion className="h-10 w-10 text-slate-600 mb-3" />
+                        <h3 className="text-sm font-semibold text-slate-300 mb-1">
+                          No File Selected
+                        </h3>
+                        <p className="text-xs max-w-sm text-slate-500">
+                          Select a file from the explorer on the left or create a new file to start editing.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 2. PREVIEW ONLY VIEW */}
+                {viewMode === 'preview' && (
+                  <LivePreview
+                    files={files}
+                    dependencies={dependencies}
+                    controlledViewport={viewport}
+                    onPreviewError={setPreviewError}
+                    onFixWithAI={fixWithAI}
+                    webcontainerUrl={webcontainerUrl}
+                    onSwitchToTerminal={() => {
+                      setShowTerminal(true);
+                      setTimeout(() => {
+                        window.dispatchEvent(new Event('resize'));
+                        window.dispatchEvent(new Event('monaco-layout'));
+                      }, 50);
+                    }}
+                  />
+                )}
+
+                {/* 3. SPLIT VIEW (Code + Preview side-by-side) */}
+                {viewMode === 'split' && (
+                  <div className="h-full w-full grid grid-cols-2 overflow-hidden min-w-0 min-h-0">
+                    <div className="h-full w-full p-2 border-r border-white/10 min-w-0 min-h-0 overflow-hidden">
                       {activeFile ? (
                         <CodeEditor
                           path={activeFile.path}
@@ -807,105 +1102,111 @@ export default function EditorPage() {
                         />
                       ) : (
                         <div className="flex h-full flex-col items-center justify-center p-8 text-center text-slate-500">
-                          <FileQuestion className="h-10 w-10 text-slate-600 mb-3" />
-                          <h3 className="text-sm font-semibold text-slate-300 mb-1">
-                            No File Selected
-                          </h3>
-                          <p className="text-xs max-w-sm text-slate-500">
-                            Select a file from the explorer on the left or create a new file to start editing.
-                          </p>
+                          <FileQuestion className="h-8 w-8 text-slate-600 mb-2" />
+                          <p className="text-xs text-slate-500">No file selected for editing</p>
                         </div>
                       )}
                     </div>
-                  )}
 
-                  {/* 2. PREVIEW ONLY VIEW */}
-                  {viewMode === 'preview' && (
-                    <LivePreview
-                      files={files}
-                      dependencies={dependencies}
-                      controlledViewport={viewport}
-                      onPreviewError={setPreviewError}
-                      onFixWithAI={fixWithAI}
-                    />
-                  )}
+                    <div className="h-full w-full min-w-0 min-h-0 overflow-hidden">
+                      <LivePreview
+                        files={files}
+                        dependencies={dependencies}
+                        controlledViewport={viewport}
+                        onPreviewError={setPreviewError}
+                        onFixWithAI={fixWithAI}
+                        webcontainerUrl={webcontainerUrl}
+                        onSwitchToTerminal={() => {
+                          setShowTerminal(true);
+                          setTimeout(() => {
+                            window.dispatchEvent(new Event('resize'));
+                            window.dispatchEvent(new Event('monaco-layout'));
+                          }, 50);
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
 
-                  {/* 3. SPLIT VIEW (Code + Preview side-by-side) */}
-                  {viewMode === 'split' && (
-                    <ResizablePanelGroup direction="horizontal" className="h-full w-full">
-                      {/* Left side: Monaco */}
-                      <ResizablePanel defaultSize="50%" minSize="30%">
-                        <div className="h-full w-full p-2">
-                          {activeFile ? (
-                            <CodeEditor
-                              path={activeFile.path}
-                              value={currentDraft}
-                              language={activeFile.language}
-                              onChange={(val) => {
-                                setDrafts((prev) => ({ ...prev, [activeFile.path]: val }));
-                              }}
-                              onSelectionChange={setSelectedCode}
-                              onCursorChange={(line, col) => setCursorPos({ line, col })}
-                              onSave={save}
-                            />
-                          ) : (
-                            <div className="flex h-full flex-col items-center justify-center p-8 text-center text-slate-500">
-                              <FileQuestion className="h-8 w-8 text-slate-600 mb-2" />
-                              <p className="text-xs text-slate-500">No file selected for editing</p>
-                            </div>
-                          )}
-                        </div>
-                      </ResizablePanel>
-
-                      <ResizableHandle withHandle />
-
-                      {/* Right side: Sandpack Live Preview */}
-                      <ResizablePanel defaultSize="50%" minSize="30%">
-                        <div className="h-full w-full">
-                          <LivePreview
-                            files={files}
-                            dependencies={dependencies}
-                            controlledViewport={viewport}
-                            onPreviewError={setPreviewError}
-                            onFixWithAI={fixWithAI}
-                          />
-                        </div>
-                      </ResizablePanel>
-                    </ResizablePanelGroup>
-                  )}
-                </div>
-              </div>
-            </ResizablePanel>
-
-            {/* Panel 3: Persistent AI Assistant (25–30%) */}
-            {showAiPanel && (
-              <>
-                <ResizableHandle withHandle />
-                <ResizablePanel
-                  defaultSize="26%"
-                  minSize="20%"
-                  maxSize="40%"
-                  className="min-w-[280px]"
-                >
-                  <PromptPanel
-                    prompt={prompt}
-                    setPrompt={setPrompt}
-                    activePath={activePath}
-                    selectedCode={selectedCode}
-                    onClearSelectedCode={() => setSelectedCode('')}
-                    previewError={previewError}
-                    onClearPreviewError={() => setPreviewError('')}
-                    isWorking={isWorking}
-                    onGenerate={generate}
-                    projectId={project?.id}
-                    currentMode={aiMode}
-                    onModeChange={setAiMode}
-                    onOpenProductWorkspace={() => setWorkspace('product')}
+                {/* 4. TERMINAL ONLY VIEW IN CENTER (Fallback) */}
+                {viewMode === 'terminal' && (
+                  <TerminalPanel
+                    files={files}
+                    onServerReady={(url) => setWebcontainerUrl(url)}
+                    onErrorDetected={(err) => setPreviewError(err)}
+                    onClose={() => setViewMode('code')}
                   />
-                </ResizablePanel>
-              </>
+                )}
+              </div>
+            </div>
+
+            {/* Drag Handle: Center to Assistant */}
+            {showAiPanel && (
+              <div
+                onMouseDown={handleAssistantMouseDown}
+                className="w-1 h-full cursor-col-resize bg-white/5 hover:bg-indigo-500/50 active:bg-indigo-500 transition-colors select-none z-10 flex items-center justify-center group"
+                title="Drag to resize AI Assistant"
+              >
+                <div className="w-0.5 h-6 rounded bg-slate-600 group-hover:bg-indigo-300" />
+              </div>
             )}
-          </ResizablePanelGroup>
+
+            {/* Panel 3: AI Assistant (min 320px, max 480px, default 360px) */}
+            {showAiPanel && (
+              <div
+                className="h-full min-h-0 min-w-0 overflow-hidden flex flex-col bg-[#0a0b16] border-l border-white/10"
+                style={{ width: `${assistantWidth}px`, minWidth: '320px', maxWidth: '480px' }}
+              >
+                <PromptPanel
+                  prompt={prompt}
+                  setPrompt={setPrompt}
+                  activePath={activePath}
+                  selectedCode={selectedCode}
+                  onClearSelectedCode={() => setSelectedCode('')}
+                  previewError={previewError}
+                  onClearPreviewError={() => setPreviewError('')}
+                  isWorking={isWorking}
+                  onGenerate={generate}
+                  projectId={project?.id}
+                  currentMode={aiMode}
+                  onModeChange={setAiMode}
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Bottom Panel: Terminal (default around 220px, resizable) */}
+          {showTerminal && (
+            <>
+              {/* Drag Handle: Upper Workspace to Terminal */}
+              <div
+                onMouseDown={handleTerminalMouseDown}
+                className="h-1 w-full cursor-row-resize bg-white/10 hover:bg-indigo-500/50 active:bg-indigo-500 transition-colors select-none z-10 flex items-center justify-center group shrink-0"
+                title="Drag to resize Terminal"
+              >
+                <div className="h-0.5 w-12 rounded bg-slate-600 group-hover:bg-indigo-300" />
+              </div>
+
+              {/* Terminal Container */}
+              <div
+                className="w-full shrink-0 overflow-hidden border-t border-white/10"
+                style={{ height: `${terminalHeight}px`, minHeight: '140px', maxHeight: '50vh' }}
+              >
+                <TerminalPanel
+                  files={files}
+                  onServerReady={(url) => setWebcontainerUrl(url)}
+                  onErrorDetected={(err) => setPreviewError(err)}
+                  onClose={() => {
+                    setShowTerminal(false);
+                    setTimeout(() => {
+                      window.dispatchEvent(new Event('resize'));
+                      window.dispatchEvent(new Event('monaco-layout'));
+                    }, 50);
+                  }}
+                />
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -932,13 +1233,20 @@ export default function EditorPage() {
         onSave={save}
         onExportZip={handleExportZip}
         onSelectViewMode={setViewMode}
+        onToggleTerminal={() => {
+          setShowTerminal((prev) => !prev);
+          setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
+        }}
         onSelectAiMode={(m) => {
-          setAiMode(m);
-          setShowAiPanel(true);
+          if (m === 'build' || m === 'code' || m === 'debug') {
+            setAiMode(m);
+            setShowAiPanel(true);
+          }
         }}
         onNewFile={() => {
           const name = window.prompt('Enter new file path (e.g. components/Header.tsx):');
           if (name) void handleCreateFile(name);
+
         }}
         onNewFolder={() => {
           const name = window.prompt('Enter new folder path (e.g. components/ui):');
